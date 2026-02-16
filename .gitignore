@@ -1,0 +1,52 @@
+# 環境變數
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 虛擬環境
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git LFS
+*.csv filter=lfs diff=lfs merge=lfs -text
+ALL_lvr_land_a.csv filter=lfs diff=lfs merge=lfs -text
+
+# 大文件
+*.zip
+*.tar.gz
+*.rar

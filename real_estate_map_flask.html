@@ -712,9 +712,15 @@
             link.download = `房地產查詢結果_${location}_${new Date().toISOString().slice(0,10)}.csv`;
             link.click();
         }
+
+        // 初始化時從後端獲取 API Key
+        document.addEventListener('DOMContentLoaded', function() {
+            // API Key 會由後端在頁面加載時自動注入
+            // 確保 Google Maps API 已正確加載
+        });
     </script>
 
-    <!-- Google Maps API -->
+    <!-- Google Maps API - API Key 由後端注入 -->
     <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initMap&language=zh-TW" async defer></script>
 </body>
 </html>

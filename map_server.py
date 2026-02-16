@@ -8,6 +8,10 @@ from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 import duckdb
 import os
+from dotenv import load_dotenv
+
+# 加載 .env 文件
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
@@ -24,7 +28,18 @@ def get_connection():
 def index():
     """主頁面"""
     with open('real_estate_map_flask.html', 'r', encoding='utf-8') as f:
-        return f.read()
+        html_content = f.read()
+    # 注入 API Key
+    api_key = os.getenv('GOOGLE_MAPS_API_KEY', '')
+    html_content = html_content.replace('YOUR_GOOGLE_MAPS_API_KEY', api_key)
+    return html_content
+
+@app.route('/api/config', methods=['GET'])
+def get_config():
+    """獲取前端配置（包括 API Key）"""
+    return jsonify({
+        'google_maps_api_key': os.getenv('GOOGLE_MAPS_API_KEY', '')
+    })
 
 @app.route('/api/search', methods=['GET'])
 def search_properties():
