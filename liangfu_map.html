@@ -4,534 +4,188 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>良富居地產 - 專業房地產地圖系統</title>
+    <!-- Leaflet.js CDN（完全免費） -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Leaflet MarkerCluster -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        
-        body {
-            font-family: 'Microsoft JhengHei', 'Segoe UI', Arial, sans-serif;
-            overflow: hidden;
-        }
-        
-        /* 頂部導航 */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Microsoft JhengHei', 'Segoe UI', Arial, sans-serif; overflow: hidden; }
+
         .top-nav {
             background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            color: white;
-            padding: 15px 30px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-            z-index: 2000;
-            position: relative;
+            color: white; padding: 15px 30px; display: flex; align-items: center;
+            justify-content: space-between; box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 2000; position: relative;
         }
-        
-        .logo {
-            font-size: 28px;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .search-bar {
-            flex: 1;
-            max-width: 500px;
-            margin: 0 30px;
-            position: relative;
-        }
-        
+        .logo { font-size: 28px; font-weight: bold; display: flex; align-items: center; gap: 10px; }
+        .search-bar { flex: 1; max-width: 500px; margin: 0 30px; position: relative; }
         .search-input {
-            width: 100%;
-            padding: 12px 45px 12px 20px;
-            border: none;
-            border-radius: 25px;
-            font-size: 15px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            width: 100%; padding: 12px 45px 12px 20px; border: none; border-radius: 25px;
+            font-size: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);
         }
-        
         .search-btn {
-            position: absolute;
-            right: 5px;
-            top: 50%;
-            transform: translateY(-50%);
+            position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
             background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
-            border: none;
-            padding: 8px 20px;
-            border-radius: 20px;
-            color: white;
-            cursor: pointer;
-            font-weight: 600;
+            border: none; padding: 8px 20px; border-radius: 20px; color: white;
+            cursor: pointer; font-weight: 600;
         }
-        
-        .nav-actions {
-            display: flex;
-            gap: 15px;
-            align-items: center;
-        }
-        
+        .nav-actions { display: flex; gap: 15px; align-items: center; }
         .unit-toggle {
-            background: rgba(255,255,255,0.2);
-            border: 1px solid rgba(255,255,255,0.3);
-            padding: 6px 4px;
-            border-radius: 20px;
-            display: flex;
-            gap: 4px;
+            background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3);
+            padding: 6px 4px; border-radius: 20px; display: flex; gap: 4px;
         }
-        
         .unit-btn {
-            background: transparent;
-            border: none;
-            padding: 6px 16px;
-            border-radius: 16px;
-            color: white;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-size: 13px;
+            background: transparent; border: none; padding: 6px 16px; border-radius: 16px;
+            color: white; cursor: pointer; transition: all 0.3s; font-size: 13px;
         }
-        
-        .unit-btn.active {
-            background: white;
-            color: #1e3c72;
-            font-weight: 600;
-        }
-        
+        .unit-btn.active { background: white; color: #1e3c72; font-weight: 600; }
         .nav-btn {
-            background: rgba(255,255,255,0.2);
-            border: none;
-            padding: 8px 20px;
-            border-radius: 20px;
-            color: white;
-            cursor: pointer;
-            transition: all 0.3s;
+            background: rgba(255,255,255,0.2); border: none; padding: 8px 20px;
+            border-radius: 20px; color: white; cursor: pointer; transition: all 0.3s;
         }
-        
-        .nav-btn:hover {
-            background: rgba(255,255,255,0.3);
-        }
-        
-        /* 主內容區 */
-        .main-container {
-            display: flex;
-            height: calc(100vh - 70px);
-        }
-        
-        /* 左側面板 */
+        .nav-btn:hover { background: rgba(255,255,255,0.3); }
+
+        .main-container { display: flex; height: calc(100vh - 70px); }
+
         .left-panel {
-            width: 400px;
-            background: white;
-            overflow-y: auto;
-            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
-            z-index: 1000;
+            width: 400px; background: white; overflow-y: auto;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1); z-index: 1000;
         }
-        
-        .filter-section {
-            padding: 20px;
-            border-bottom: 1px solid #eee;
-        }
-        
-        .filter-title {
-            font-weight: 600;
-            margin-bottom: 15px;
-            font-size: 16px;
-            color: #333;
-        }
-        
-        .filter-group {
-            margin-bottom: 15px;
-        }
-        
-        .filter-label {
-            font-size: 13px;
-            color: #666;
-            margin-bottom: 8px;
-            display: block;
-        }
-        
-        .filter-row {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 10px;
-        }
-        
-        .filter-input {
-            flex: 1;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            font-size: 14px;
-        }
-        
+        .filter-section { padding: 20px; border-bottom: 1px solid #eee; }
+        .filter-title { font-weight: 600; margin-bottom: 15px; font-size: 16px; color: #333; }
+        .filter-group { margin-bottom: 15px; }
+        .filter-label { font-size: 13px; color: #666; margin-bottom: 8px; display: block; }
+        .filter-row { display: flex; gap: 10px; margin-bottom: 10px; }
+        .filter-input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
         .apply-filter-btn {
-            width: 100%;
-            padding: 12px;
+            width: 100%; padding: 12px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            cursor: pointer;
-            margin-top: 10px;
+            color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; margin-top: 10px;
         }
-        
-        .apply-filter-btn:hover {
-            opacity: 0.9;
-        }
-        
-        .projects-list {
-            padding: 15px;
-        }
-        
+        .apply-filter-btn:hover { opacity: 0.9; }
+        .projects-list { padding: 15px; }
         .project-card {
-            background: white;
-            border: 1px solid #e0e0e0;
-            border-radius: 12px;
-            padding: 15px;
-            margin-bottom: 12px;
-            cursor: pointer;
-            transition: all 0.3s;
+            background: white; border: 1px solid #e0e0e0; border-radius: 12px;
+            padding: 15px; margin-bottom: 12px; cursor: pointer; transition: all 0.3s;
         }
-        
-        .project-card:hover {
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            transform: translateY(-2px);
-        }
-        
+        .project-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.15); transform: translateY(-2px); }
         .project-card.active {
             border-color: #667eea;
             background: linear-gradient(135deg, rgba(102,126,234,0.05) 0%, rgba(118,75,162,0.05) 100%);
         }
-        
-        .project-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 10px;
-        }
-        
-        .project-name {
-            font-weight: 600;
-            font-size: 16px;
-            color: #333;
-            margin-bottom: 5px;
-        }
-        
+        .project-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+        .project-name { font-weight: 600; font-size: 16px; color: #333; margin-bottom: 5px; }
         .project-badge {
             background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
-            color: white;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 12px;
-            font-weight: 600;
+            color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;
         }
-        
-        .project-address {
-            font-size: 13px;
-            color: #666;
-            margin-bottom: 10px;
-        }
-        
-        .project-price {
-            font-size: 22px;
-            color: #e74c3c;
-            font-weight: bold;
-            margin: 10px 0;
-        }
-        
-        .project-stats {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-            margin-top: 10px;
-        }
-        
-        .stat-item {
-            font-size: 13px;
-            color: #666;
-        }
-        
-        .stat-label {
-            color: #999;
-            margin-right: 5px;
-        }
-        
-        /* 地圖區域 */
-        .map-container {
-            flex: 1;
-            position: relative;
-        }
-        
-        #map {
-            width: 100%;
-            height: 100%;
-        }
-        
-        /* 地圖控制按鈕 */
+        .project-address { font-size: 13px; color: #666; margin-bottom: 10px; }
+        .project-price { font-size: 22px; color: #e74c3c; font-weight: bold; margin: 10px 0; }
+        .project-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+        .stat-item { font-size: 13px; color: #666; }
+        .stat-label { color: #999; margin-right: 5px; }
+
+        .map-container { flex: 1; position: relative; }
+        #map { width: 100%; height: 100%; }
+
         .map-controls {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            z-index: 1000;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
+            position: absolute; top: 20px; right: 20px; z-index: 1000;
+            display: flex; flex-direction: column; gap: 10px;
         }
-        
         .map-control-btn {
-            background: white;
-            border: none;
-            padding: 12px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-            cursor: pointer;
-            font-size: 18px;
-            transition: all 0.3s;
+            background: white; border: none; padding: 12px; border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2); cursor: pointer; font-size: 18px;
         }
-        
-        .map-control-btn:hover {
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        }
-        
-        /* 銷控面板模態框 */
+        .map-control-btn:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+
+        /* 模態框 */
         .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0,0,0,0.7);
-            z-index: 3000;
-            justify-content: center;
-            align-items: center;
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 3000; justify-content: center; align-items: center;
         }
-        
-        .modal.active {
-            display: flex;
-        }
-        
+        .modal.active { display: flex; }
         .modal-content {
-            background: white;
-            border-radius: 20px;
-            width: 90%;
-            max-width: 1200px;
-            max-height: 90vh;
-            overflow-y: auto;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            background: white; border-radius: 20px; width: 90%; max-width: 1200px;
+            max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
         }
-        
         .modal-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 25px 30px;
-            border-radius: 20px 20px 0 0;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            color: white; padding: 25px 30px; border-radius: 20px 20px 0 0;
+            display: flex; justify-content: space-between; align-items: center;
         }
-        
-        .modal-title {
-            font-size: 24px;
-            font-weight: bold;
-        }
-        
+        .modal-title { font-size: 24px; font-weight: bold; }
         .close-btn {
-            background: rgba(255,255,255,0.2);
-            border: none;
-            color: white;
-            font-size: 28px;
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            cursor: pointer;
-            transition: all 0.3s;
+            background: rgba(255,255,255,0.2); border: none; color: white; font-size: 28px;
+            width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
         }
-        
-        .close-btn:hover {
-            background: rgba(255,255,255,0.3);
-            transform: rotate(90deg);
-        }
-        
-        .modal-body {
-            padding: 30px;
-        }
-        
-        /* 建案詳情 */
-        .project-detail-header {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        
+        .close-btn:hover { background: rgba(255,255,255,0.3); transform: rotate(90deg); }
+        .modal-body { padding: 30px; }
+        .project-detail-header { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 30px; }
         .detail-stat-card {
             background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-            padding: 20px;
-            border-radius: 12px;
-            text-align: center;
+            padding: 20px; border-radius: 12px; text-align: center;
         }
-        
-        .detail-stat-label {
-            font-size: 14px;
-            color: #666;
-            margin-bottom: 8px;
-        }
-        
-        .detail-stat-value {
-            font-size: 28px;
-            font-weight: bold;
-            color: #333;
-        }
-        
-        /* 銷控表 */
-        .sales-control-section {
-            margin-top: 30px;
-        }
-        
-        .section-title {
-            font-size: 20px;
-            font-weight: 600;
-            margin-bottom: 20px;
-            color: #333;
-        }
-        
+        .detail-stat-label { font-size: 14px; color: #666; margin-bottom: 8px; }
+        .detail-stat-value { font-size: 28px; font-weight: bold; color: #333; }
+        .section-title { font-size: 20px; font-weight: 600; margin-bottom: 20px; color: #333; }
         .sales-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-            gap: 10px;
-            margin-top: 20px;
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px; margin-top: 20px;
         }
-        
         .unit-cell {
-            aspect-ratio: 1;
-            border: 2px solid #ddd;
-            border-radius: 8px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            cursor: pointer;
-            transition: all 0.3s;
-            padding: 10px;
+            aspect-ratio: 1; border: 2px solid #ddd; border-radius: 8px;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            cursor: pointer; transition: all 0.3s; padding: 10px;
         }
-        
-        .unit-cell.sold {
-            background: #ffebee;
-            border-color: #e74c3c;
-        }
-        
-        .unit-cell:hover {
-            transform: scale(1.05);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        }
-        
-        .unit-number {
-            font-weight: 600;
-            font-size: 14px;
-            margin-bottom: 5px;
-        }
-        
-        .unit-price {
-            font-size: 11px;
-            color: #666;
-        }
-        
-        /* 交易記錄 */
-        .transactions-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
-        
-        .transactions-table th {
-            background: #f5f5f5;
-            padding: 12px;
-            text-align: left;
-            font-weight: 600;
-            border-bottom: 2px solid #ddd;
-        }
-        
-        .transactions-table td {
-            padding: 12px;
-            border-bottom: 1px solid #eee;
-        }
-        
-        .transactions-table tr:hover {
-            background: #f9f9f9;
-        }
-        
-        /* 載入動畫 */
+        .unit-cell.sold { background: #ffebee; border-color: #e74c3c; }
+        .unit-cell:hover { transform: scale(1.05); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .unit-number { font-weight: 600; font-size: 14px; margin-bottom: 5px; }
+        .unit-price { font-size: 11px; color: #666; }
+        .transactions-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .transactions-table th { background: #f5f5f5; padding: 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; }
+        .transactions-table td { padding: 12px; border-bottom: 1px solid #eee; }
+        .transactions-table tr:hover { background: #f9f9f9; }
+
         .loading-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(255,255,255,0.9);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 2000;
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255,255,255,0.9); display: flex; justify-content: center;
+            align-items: center; z-index: 2000;
         }
-        
         .loading-spinner {
-            width: 50px;
-            height: 50px;
-            border: 5px solid #f3f3f3;
-            border-top: 5px solid #667eea;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
+            width: 50px; height: 50px; border: 5px solid #f3f3f3;
+            border-top: 5px solid #667eea; border-radius: 50%; animation: spin 1s linear infinite;
         }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        
-        .hidden {
-            display: none !important;
-        }
-        
-        /* 價格圖例 */
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .hidden { display: none !important; }
+
         .price-legend {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            background: white;
-            padding: 15px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            z-index: 1000;
+            position: absolute; bottom: 20px; left: 20px; background: white;
+            padding: 15px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.2); z-index: 1000;
         }
-        
-        .legend-item {
-            display: flex;
-            align-items: center;
-            margin: 5px 0;
-            font-size: 13px;
+        .legend-item { display: flex; align-items: center; margin: 5px 0; font-size: 13px; }
+        .legend-color { width: 20px; height: 20px; border-radius: 50%; margin-right: 8px; }
+
+        /* 自訂 Leaflet 圓形標記 */
+        .price-marker {
+            background: transparent; border: none;
         }
-        
-        .legend-color {
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            margin-right: 8px;
+        .price-marker-inner {
+            width: 36px; height: 36px; border-radius: 50%; border: 3px solid white;
+            display: flex; justify-content: center; align-items: center;
+            color: white; font-size: 10px; font-weight: bold; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            white-space: nowrap;
         }
     </style>
 </head>
 <body>
-    <!-- 頂部導航 -->
     <div class="top-nav">
-        <div class="logo">
-            🏠 良富居地產
-        </div>
+        <div class="logo">🏠 良富居地產</div>
         <div class="search-bar">
-            <input type="text" 
-                   id="mainSearch" 
-                   class="search-input" 
+            <input type="text" id="mainSearch" class="search-input"
                    placeholder="搜尋地區、建案名稱、地址..."
                    onkeypress="if(event.key==='Enter') performSearch()">
             <button class="search-btn" onclick="performSearch()">搜尋</button>
@@ -545,18 +199,13 @@
         </div>
     </div>
 
-    <!-- 主內容區 -->
     <div class="main-container">
-        <!-- 左側建案列表 -->
         <div class="left-panel">
-            <!-- 篩選區 -->
             <div class="filter-section">
                 <div class="filter-title">🎯 進階篩選</div>
-                
-                <!-- 排序 -->
                 <div class="filter-group">
                     <div class="filter-label">🔄 排序方式</div>
-                    <select id="sortBy" class="filter-input" onchange="applyFilters()" style="width: 100%; margin-bottom: 8px;">
+                    <select id="sortBy" class="filter-input" style="width:100%;margin-bottom:8px;">
                         <option value="transaction_count">交易筆數（預設）</option>
                         <option value="date">成交日期</option>
                         <option value="price">成交金額</option>
@@ -564,13 +213,11 @@
                         <option value="area">坪數</option>
                         <option value="ratio">公設比</option>
                     </select>
-                    <select id="sortOrder" class="filter-input" onchange="applyFilters()" style="width: 100%;">
+                    <select id="sortOrder" class="filter-input" style="width:100%;">
                         <option value="desc">由高到低</option>
                         <option value="asc">由低到高</option>
                     </select>
                 </div>
-                
-                <!-- 總價 -->
                 <div class="filter-group">
                     <div class="filter-label">總價範圍（萬元）</div>
                     <div class="filter-row">
@@ -578,8 +225,6 @@
                         <input type="number" id="maxPrice" class="filter-input" placeholder="最高">
                     </div>
                 </div>
-                
-                <!-- 單價 -->
                 <div class="filter-group">
                     <div class="filter-label" id="unitPriceLabel">單價範圍（元/坪）</div>
                     <div class="filter-row">
@@ -587,17 +232,13 @@
                         <input type="number" id="maxUnitPrice" class="filter-input" placeholder="最高">
                     </div>
                 </div>
-                
-                <!-- 坪數 -->
                 <div class="filter-group">
-                    <div class="filter-label" id="areaLabel">坪數範圍（坪）</div>
+                    <div class="filter-label">坪數範圍（坪）</div>
                     <div class="filter-row">
                         <input type="number" id="minPing" class="filter-input" placeholder="最低">
                         <input type="number" id="maxPing" class="filter-input" placeholder="最高">
                     </div>
                 </div>
-                
-                <!-- 年份 -->
                 <div class="filter-group">
                     <div class="filter-label">成交年份（西元）</div>
                     <div class="filter-row">
@@ -605,8 +246,6 @@
                         <input type="number" id="maxYear" class="filter-input" placeholder="最晚" value="2026">
                     </div>
                 </div>
-                
-                <!-- 公設比 -->
                 <div class="filter-group">
                     <div class="filter-label">公設比範圍（%）</div>
                     <div class="filter-row">
@@ -614,11 +253,9 @@
                         <input type="number" id="maxRatio" class="filter-input" placeholder="最高">
                     </div>
                 </div>
-                
-                <!-- 建物型態 -->
                 <div class="filter-group">
                     <div class="filter-label">建物型態</div>
-                    <select id="buildingType" class="filter-input" style="width: 100%;">
+                    <select id="buildingType" class="filter-input" style="width:100%;">
                         <option value="">全部</option>
                         <option value="住宅大樓">住宅大樓</option>
                         <option value="華廈">華廈</option>
@@ -627,11 +264,9 @@
                         <option value="套房">套房</option>
                     </select>
                 </div>
-                
-                <!-- 房數 -->
                 <div class="filter-group">
                     <div class="filter-label">房數</div>
-                    <select id="roomCount" class="filter-input" style="width: 100%;">
+                    <select id="roomCount" class="filter-input" style="width:100%;">
                         <option value="">全部</option>
                         <option value="1">1房</option>
                         <option value="2">2房</option>
@@ -640,54 +275,33 @@
                         <option value="5">5房以上</option>
                     </select>
                 </div>
-                
                 <button class="apply-filter-btn" onclick="applyFilters()">套用篩選</button>
-                <button class="apply-filter-btn" onclick="resetFilters()" style="background: #95a5a6; margin-top: 8px;">清除篩選</button>
+                <button class="apply-filter-btn" onclick="resetFilters()" style="background:#95a5a6;margin-top:8px;">清除篩選</button>
             </div>
-
-            <!-- 建案列表 -->
             <div class="projects-list" id="projectsList">
-                <div style="text-align: center; padding: 40px 20px; color: #999;">
-                    <div style="font-size: 48px; margin-bottom: 15px;">🏢</div>
+                <div style="text-align:center;padding:40px 20px;color:#999;">
+                    <div style="font-size:48px;margin-bottom:15px;">🏢</div>
                     <p>載入建案中...</p>
                 </div>
             </div>
         </div>
 
-        <!-- 右側地圖 -->
         <div class="map-container">
             <div id="loadingOverlay" class="loading-overlay">
                 <div class="loading-spinner"></div>
             </div>
-            
             <div id="map"></div>
-            
-            <!-- 地圖控制 -->
             <div class="map-controls">
-                <button class="map-control-btn" onclick="map.setZoom(map.getZoom() + 1)" title="放大">+</button>
-                <button class="map-control-btn" onclick="map.setZoom(map.getZoom() - 1)" title="縮小">-</button>
+                <button class="map-control-btn" onclick="map.zoomIn()" title="放大">+</button>
+                <button class="map-control-btn" onclick="map.zoomOut()" title="縮小">-</button>
                 <button class="map-control-btn" onclick="resetMapView()" title="重置">🎯</button>
             </div>
-            
-            <!-- 價格圖例 -->
             <div class="price-legend">
-                <div style="font-weight: 600; margin-bottom: 10px;">💰 價格範圍</div>
-                <div class="legend-item">
-                    <div class="legend-color" style="background: #4caf50;"></div>
-                    <span>&lt; 1000萬</span>
-                </div>
-                <div class="legend-item">
-                    <div class="legend-color" style="background: #2196f3;"></div>
-                    <span>1000萬 - 2000萬</span>
-                </div>
-                <div class="legend-item">
-                    <div class="legend-color" style="background: #ff9800;"></div>
-                    <span>2000萬 - 5000萬</span>
-                </div>
-                <div class="legend-item">
-                    <div class="legend-color" style="background: #f44336;"></div>
-                    <span>&gt; 5000萬</span>
-                </div>
+                <div style="font-weight:600;margin-bottom:10px;">💰 價格範圍</div>
+                <div class="legend-item"><div class="legend-color" style="background:#4caf50;"></div><span>&lt; 1000萬</span></div>
+                <div class="legend-item"><div class="legend-color" style="background:#2196f3;"></div><span>1000萬 - 2000萬</span></div>
+                <div class="legend-item"><div class="legend-color" style="background:#ff9800;"></div><span>2000萬 - 5000萬</span></div>
+                <div class="legend-item"><div class="legend-color" style="background:#f44336;"></div><span>&gt; 5000萬</span></div>
             </div>
         </div>
     </div>
@@ -699,145 +313,114 @@
                 <div class="modal-title" id="modalTitle">建案銷控面板</div>
                 <button class="close-btn" onclick="closeModal()">&times;</button>
             </div>
-            <div class="modal-body" id="modalBody">
-                <!-- 動態載入內容 -->
-            </div>
+            <div class="modal-body" id="modalBody"></div>
         </div>
     </div>
 
     <script>
-        // 動態設定 API 基礎 URL，支援任何地址訪問
         const API_BASE = `${window.location.protocol}//${window.location.host}`;
-        const SQM_TO_PING = 0.3025; // 1平方公尺 = 0.3025坪
-        const PING_TO_SQM = 3.3058; // 1坪 = 3.3058平方公尺
-        
-        let map, infoWindow;
+        const SQM_TO_PING = 0.3025;
+        const PING_TO_SQM = 3.3058;
+
+        let map, markerClusterGroup;
         let markers = [];
         let projects = [];
         let selectedProjectId = null;
-        let currentUnit = 'sqm'; // 'sqm' 或 'ping'
+        let currentUnit = 'ping';
 
-        // 初始化地圖
+        // ===================== 初始化 Leaflet 地圖 =====================
         function initMap() {
-            map = new google.maps.Map(document.getElementById('map'), {
-                center: { lat: 25.0330, lng: 121.5654 },
+            map = L.map('map', {
+                center: [25.0330, 121.5654],
                 zoom: 12,
-                styles: [
-                    {
-                        featureType: "poi.business",
-                        stylers: [{ visibility: "off" }]
-                    }
-                ],
-                mapTypeControl: false,
-                streetViewControl: false
+                zoomControl: false  // 我們用自己的按鈕
             });
-            
-            infoWindow = new google.maps.InfoWindow();
-            
+
+            // OpenStreetMap 免費圖層
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+                maxZoom: 19
+            }).addTo(map);
+
+            // MarkerCluster 讓大量標記自動聚合
+            markerClusterGroup = L.markerClusterGroup({
+                maxClusterRadius: 50,
+                spiderfyOnMaxZoom: true,
+                showCoverageOnHover: false,
+                iconCreateFunction: function(cluster) {
+                    const count = cluster.getChildCount();
+                    let size = 'small';
+                    if (count > 50) size = 'large';
+                    else if (count > 10) size = 'medium';
+                    return L.divIcon({
+                        html: '<div style="background:linear-gradient(135deg,#667eea,#764ba2);color:white;border-radius:50%;width:40px;height:40px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:14px;border:3px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.3);">' + count + '</div>',
+                        className: 'price-marker',
+                        iconSize: [40, 40]
+                    });
+                }
+            });
+            map.addLayer(markerClusterGroup);
+
             loadAllProjects();
             hideLoading();
         }
 
-        // 設定單位
+        // ===================== 單位切換 =====================
         function setUnit(unit) {
             currentUnit = unit;
             document.getElementById('unitBtnSqm').classList.toggle('active', unit === 'sqm');
             document.getElementById('unitBtnPing').classList.toggle('active', unit === 'ping');
-            
-            // 更新標籤
-            const label = document.getElementById('unitPriceLabel');
-            label.textContent = unit === 'sqm' ? '單價範圍（元/㎡）' : '單價範圍（萬元/坪）';
-            
-            // 重新顯示列表
-            if (projects.length > 0) {
-                displayProjects(projects);
-            }
+            document.getElementById('unitPriceLabel').textContent = unit === 'sqm' ? '單價範圍（元/㎡）' : '單價範圍（元/坪）';
+            if (projects.length > 0) displayProjects(projects);
         }
 
-        // 轉換面積
         function convertArea(sqm) {
             return currentUnit === 'ping' ? (sqm * SQM_TO_PING).toFixed(2) : sqm.toFixed(2);
         }
-
-        // 轉換單價
-        function convertUnitPrice(pricePerSqm) {
-            if (currentUnit === 'ping') {
-                // 元/坪 = 元/㎡ × 3.3058 / 10000 萬
-                return ((pricePerSqm * PING_TO_SQM) / 10000).toFixed(2);
-            }
-            return pricePerSqm.toFixed(2);
+        function convertUnitPrice(pricePerPing) {
+            // 後端已經傳回元/坪
+            if (currentUnit === 'sqm') return (pricePerPing / PING_TO_SQM).toFixed(2);
+            return pricePerPing.toFixed(2);
         }
+        function getUnitText() { return currentUnit === 'ping' ? '坪' : '㎡'; }
+        function getUnitPriceText() { return currentUnit === 'ping' ? '元/坪' : '元/㎡'; }
 
-        // 獲取單位文字
-        function getUnitText() {
-            return currentUnit === 'ping' ? '坪' : '㎡';
-        }
-
-        // 獲取單價單位文字
-        function getUnitPriceText() {
-            return currentUnit === 'ping' ? '萬/坪' : '元/㎡';
-        }
-
-        // 載入所有建案
+        // ===================== 載入資料 =====================
         async function loadAllProjects() {
             showLoading();
             try {
-                console.log(`正在連接到: ${API_BASE}/api/projects`);
                 const response = await fetch(`${API_BASE}/api/projects`);
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
-                }
-                
                 const result = await response.json();
-                console.log('API 回應:', result);
-                
                 if (result.success) {
-                    console.log(`成功載入 ${result.count} 個建案`);
                     projects = result.projects;
                     displayProjects(projects);
                     addMarkersToMap(projects);
                 } else {
-                    console.error('載入失敗:', result.error);
                     alert('載入建案失敗：' + result.error);
                 }
             } catch (error) {
                 console.error('載入建案失敗:', error);
-                console.error('詳細錯誤信息:', {
-                    message: error.message,
-                    name: error.name,
-                    apiBase: API_BASE,
-                    url: `${API_BASE}/api/projects`
-                });
-                alert(`載入建案失敗：${error.message}`);
+                alert('載入建案失敗：' + error.message);
             } finally {
                 hideLoading();
             }
         }
 
-        // 顯示建案列表
+        // ===================== 顯示建案列表 =====================
         function displayProjects(projectList) {
             const container = document.getElementById('projectsList');
-            
             if (projectList.length === 0) {
-                container.innerHTML = `
-                    <div style="text-align: center; padding: 40px 20px; color: #999;">
-                        <div style="font-size: 48px; margin-bottom: 15px;">😔</div>
-                        <p>找不到符合條件的建案</p>
-                    </div>
-                `;
+                container.innerHTML = '<div style="text-align:center;padding:40px 20px;color:#999;"><div style="font-size:48px;margin-bottom:15px;">😔</div><p>找不到符合條件的建案</p></div>';
                 return;
             }
-            
-            const html = projectList.map(project => {
-                const unitPrice = convertUnitPrice(project.avg_unit_price);
+            container.innerHTML = projectList.map(project => {
+                const unitPrice = project.avg_unit_price ? convertUnitPrice(project.avg_unit_price) : '0';
                 const avgPing = project.avg_ping ? project.avg_ping.toFixed(2) : '0.00';
                 const ratio = project.avg_ratio ? project.avg_ratio.toFixed(1) : '-';
                 const latestDate = project.latest_date || '-';
-                
                 return `
-                    <div class="project-card ${selectedProjectId === project.id ? 'active' : ''}" 
-                         onclick="selectProject(${project.id}, '${project.address.replace(/'/g, "\\'")}')">
+                    <div class="project-card ${selectedProjectId === project.id ? 'active' : ''}"
+                         onclick="selectProject('${project.id}', '${project.address.replace(/'/g, "\\'")}')">
                         <div class="project-header">
                             <div>
                                 <div class="project-name">${project.name}</div>
@@ -847,315 +430,195 @@
                         </div>
                         <div class="project-price">${formatPrice(project.avg_price)}</div>
                         <div class="project-stats">
-                            <div class="stat-item">
-                                <span class="stat-label">單價:</span>
-                                ${unitPrice} 元/坪
-                            </div>
-                            <div class="stat-item">
-                                <span class="stat-label">坪數:</span>
-                                ${avgPing} 坪
-                            </div>
-                            <div class="stat-item">
-                                <span class="stat-label">公設比:</span>
-                                ${ratio}%
-                            </div>
-                            <div class="stat-item">
-                                <span class="stat-label">最新:</span>
-                                ${latestDate}
-                            </div>
+                            <div class="stat-item"><span class="stat-label">單價:</span>${unitPrice} ${getUnitPriceText()}</div>
+                            <div class="stat-item"><span class="stat-label">坪數:</span>${avgPing} 坪</div>
+                            <div class="stat-item"><span class="stat-label">公設比:</span>${ratio}%</div>
+                            <div class="stat-item"><span class="stat-label">最新:</span>${latestDate}</div>
                         </div>
-                    </div>
-                `;
+                    </div>`;
             }).join('');
-            
-            container.innerHTML = html;
         }
 
-        // 在地圖上添加標記
-        async function addMarkersToMap(projectList) {
-            clearMarkers();
-            const bounds = new google.maps.LatLngBounds();
-            
-            for (let i = 0; i < Math.min(projectList.length, 200); i++) {
-                const project = projectList[i];
-                
-                try {
-                    // 使用 API 提供的座標
-                    if (project.lat && project.lng) {
-                        const position = {lat: project.lat, lng: project.lng};
-                        const marker = createProjectMarker(position, project);
-                        markers.push(marker);
-                        bounds.extend(position);
-                    }
-                } catch (error) {
-                    console.error('創建標記失敗:', error);
-                }
-            }
-            
+        // ===================== 地圖標記 =====================
+        function addMarkersToMap(projectList) {
+            markerClusterGroup.clearLayers();
+            markers = [];
+            const bounds = L.latLngBounds();
+
+            projectList.forEach(project => {
+                if (!project.lat || !project.lng) return;
+
+                const color = getPriceColor(project.avg_price);
+                const priceShort = formatPriceShort(project.avg_price);
+
+                const icon = L.divIcon({
+                    html: `<div class="price-marker-inner" style="background:${color};">${priceShort}</div>`,
+                    className: 'price-marker',
+                    iconSize: [40, 40],
+                    iconAnchor: [20, 20]
+                });
+
+                const marker = L.marker([project.lat, project.lng], { icon: icon });
+                marker.bindPopup(`
+                    <div style="min-width:200px;">
+                        <b>${project.name}</b><br>
+                        📍 ${project.address}<br>
+                        💰 ${formatPrice(project.avg_price)}<br>
+                        📐 ${project.avg_ping ? project.avg_ping.toFixed(2) : '-'} 坪<br>
+                        📊 ${project.transaction_count} 筆交易
+                    </div>
+                `);
+                marker.on('click', () => selectProject(project.id, project.address));
+
+                markerClusterGroup.addLayer(marker);
+                markers.push(marker);
+                bounds.extend([project.lat, project.lng]);
+            });
+
             if (markers.length > 0) {
-                map.fitBounds(bounds);
+                map.fitBounds(bounds, { padding: [50, 50] });
             }
         }
 
-        // 創建建案標記
-        function createProjectMarker(position, project) {
-            const priceColor = getPriceColor(project.avg_price);
-            const priceShort = formatPriceShort(project.avg_price);
-            
-            const marker = new google.maps.Marker({
-                position: position,
-                map: map,
-                title: project.name,
-                label: {
-                    text: priceShort,
-                    color: 'white',
-                    fontSize: '11px',
-                    fontWeight: 'bold'
-                },
-                icon: {
-                    path: google.maps.SymbolPath.CIRCLE,
-                    scale: 18,
-                    fillColor: priceColor,
-                    fillOpacity: 0.9,
-                    strokeColor: 'white',
-                    strokeWeight: 3
-                }
-            });
-            
-            marker.addListener('click', () => {
-                selectProject(project.id, project.address);
-            });
-            
-            return marker;
-        }
-
-        // 選擇建案
+        // ===================== 建案操作 =====================
         function selectProject(projectId, address) {
             selectedProjectId = projectId;
             displayProjects(projects);
             showProjectDetail(projectId, address);
         }
 
-        // 顯示建案詳情（銷控面板）
         async function showProjectDetail(projectId, address) {
             document.getElementById('modalTitle').textContent = '載入中...';
             document.getElementById('salesModal').classList.add('active');
-            
             try {
                 const response = await fetch(`${API_BASE}/api/project/${projectId}?address=${encodeURIComponent(address)}`);
                 const result = await response.json();
-                
                 if (result.success) {
-                    const project = result.project;
-                    renderProjectDetail(project);
+                    renderProjectDetail(result.project);
                 } else {
                     document.getElementById('modalBody').innerHTML = `<p style="text-align:center;padding:40px;">載入失敗：${result.error}</p>`;
                 }
             } catch (error) {
-                console.error('載入建案詳情失敗:', error);
                 document.getElementById('modalBody').innerHTML = '<p style="text-align:center;padding:40px;">載入失敗</p>';
             }
         }
 
-        // 渲染建案詳情
         function renderProjectDetail(project) {
             const transactions = project.transactions;
             const salesControl = project.sales_control;
-            
             document.getElementById('modalTitle').textContent = transactions[0]['土地位置建物門牌'];
-            
-            const avgPrice = transactions.reduce((sum, t) => sum + (parseFloat(t['總價元']) || 0), 0) / transactions.length;
-            const avgUnitPrice = transactions.reduce((sum, t) => sum + (parseFloat(t['單價元平方公尺']) || 0), 0) / transactions.length;
-            const avgArea = transactions.reduce((sum, t) => sum + (parseFloat(t['建物移轉總面積平方公尺']) || 0), 0) / transactions.length;
-            
+
+            const avgPrice = transactions.reduce((s, t) => s + (parseFloat(t['總價元']) || 0), 0) / transactions.length;
+            const avgUnitPrice = transactions.reduce((s, t) => s + (parseFloat(t['單價元平方公尺']) || 0), 0) / transactions.length;
+            const avgArea = transactions.reduce((s, t) => s + (parseFloat(t['建物移轉總面積平方公尺']) || 0), 0) / transactions.length;
+            const avgPing = avgArea / PING_TO_SQM;
+            const avgUPPing = avgUnitPrice * PING_TO_SQM;
+
             let html = `
                 <div class="project-detail-header">
-                    <div class="detail-stat-card">
-                        <div class="detail-stat-label">總交易數</div>
-                        <div class="detail-stat-value">${salesControl.total_units}</div>
-                    </div>
-                    <div class="detail-stat-card">
-                        <div class="detail-stat-label">平均總價</div>
-                        <div class="detail-stat-value">${formatPriceShort(avgPrice)}</div>
-                    </div>
-                    <div class="detail-stat-card">
-                        <div class="detail-stat-label">平均單價</div>
-                        <div class="detail-stat-value">${convertUnitPrice(avgUnitPrice)}<br><span style="font-size:14px;">${getUnitPriceText()}</span></div>
-                    </div>
-                    <div class="detail-stat-card">
-                        <div class="detail-stat-label">平均面積</div>
-                        <div class="detail-stat-value">${convertArea(avgArea)}<br><span style="font-size:14px;">${getUnitText()}</span></div>
-                    </div>
+                    <div class="detail-stat-card"><div class="detail-stat-label">總交易數</div><div class="detail-stat-value">${salesControl.total_units}</div></div>
+                    <div class="detail-stat-card"><div class="detail-stat-label">平均總價</div><div class="detail-stat-value">${formatPriceShort(avgPrice)}</div></div>
+                    <div class="detail-stat-card"><div class="detail-stat-label">平均單價</div><div class="detail-stat-value">${convertUnitPrice(avgUPPing)}<br><span style="font-size:14px;">${getUnitPriceText()}</span></div></div>
+                    <div class="detail-stat-card"><div class="detail-stat-label">平均面積</div><div class="detail-stat-value">${avgPing.toFixed(2)}<br><span style="font-size:14px;">坪</span></div></div>
                 </div>
-                
-                <div class="sales-control-section">
-                    <div class="section-title">📋 交易記錄銷控表</div>
-                    <div class="sales-grid">
-            `;
-            
-            transactions.forEach((trans, index) => {
+                <div><div class="section-title">📋 交易記錄銷控表</div><div class="sales-grid">`;
+
+            transactions.forEach(trans => {
                 const price = parseFloat(trans['總價元']) || 0;
-                html += `
-                    <div class="unit-cell sold" title="${trans['交易年月日']}">
-                        <div class="unit-number">${trans['移轉層次']}樓</div>
-                        <div class="unit-price">${formatPriceShort(price)}</div>
-                    </div>
-                `;
+                html += `<div class="unit-cell sold" title="${trans['交易年月日']}"><div class="unit-number">${trans['移轉層次']}樓</div><div class="unit-price">${formatPriceShort(price)}</div></div>`;
             });
-            
-            html += `
-                    </div>
-                </div>
-                
-                <div style="margin-top: 30px;">
-                    <div class="section-title">📊 詳細交易記錄</div>
-                    <table class="transactions-table">
-                        <thead>
-                            <tr>
-                                <th>交易日期</th>
-                                <th>樓層</th>
-                                <th>格局</th>
-                                <th>面積</th>
-                                <th>總價</th>
-                                <th>單價</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-            `;
-            
+
+            html += `</div></div><div style="margin-top:30px;"><div class="section-title">📊 詳細交易記錄</div>
+                <table class="transactions-table"><thead><tr><th>交易日期</th><th>樓層</th><th>格局</th><th>面積</th><th>總價</th><th>單價</th></tr></thead><tbody>`;
+
             transactions.forEach(trans => {
                 const area = parseFloat(trans['建物移轉總面積平方公尺']) || 0;
                 const unitPrice = parseFloat(trans['單價元平方公尺']) || 0;
-                
-                html += `
-                    <tr>
-                        <td>${trans['交易年月日'] || '-'}</td>
-                        <td>${trans['移轉層次'] || '-'}/${trans['總樓層數'] || '-'}</td>
-                        <td>${trans['房'] || '-'}房${trans['廳'] || '-'}廳${trans['衛'] || '-'}衛</td>
-                        <td>${convertArea(area)} ${getUnitText()}</td>
-                        <td style="color: #e74c3c; font-weight: 600;">${formatPrice(trans['總價元'])}</td>
-                        <td>${convertUnitPrice(unitPrice)} ${getUnitPriceText()}</td>
-                    </tr>
-                `;
+                const ping = area / PING_TO_SQM;
+                const upPing = unitPrice * PING_TO_SQM;
+                html += `<tr>
+                    <td>${trans['交易年月日'] || '-'}</td>
+                    <td>${trans['移轉層次'] || '-'}/${trans['總樓層數'] || '-'}</td>
+                    <td>${trans['建物現況格局-房'] || '-'}房${trans['建物現況格局-廳'] || '-'}廳${trans['建物現況格局-衛'] || '-'}衛</td>
+                    <td>${ping.toFixed(2)} 坪</td>
+                    <td style="color:#e74c3c;font-weight:600;">${formatPrice(trans['總價元'])}</td>
+                    <td>${convertUnitPrice(upPing)} ${getUnitPriceText()}</td>
+                </tr>`;
             });
-            
-            html += `
-                        </tbody>
-                    </table>
-                </div>
-            `;
-            
+
+            html += '</tbody></table></div>';
             document.getElementById('modalBody').innerHTML = html;
         }
 
-        // 關閉模態框
-        function closeModal() {
-            document.getElementById('salesModal').classList.remove('active');
-        }
+        function closeModal() { document.getElementById('salesModal').classList.remove('active'); }
 
-        // 搜尋
+        // ===================== 搜尋 & 篩選 =====================
         async function performSearch() {
             const keyword = document.getElementById('mainSearch').value.trim();
-            if (!keyword) {
-                loadAllProjects();
-                return;
-            }
-            
+            if (!keyword) { loadAllProjects(); return; }
             showLoading();
             try {
                 const response = await fetch(`${API_BASE}/api/search?keyword=${encodeURIComponent(keyword)}`);
                 const result = await response.json();
-                
                 if (result.success) {
                     projects = result.projects;
                     displayProjects(projects);
                     addMarkersToMap(projects);
-                } else {
-                    console.error('搜尋失敗:', result.error);
-                    alert('搜尋失敗：' + result.error);
                 }
             } catch (error) {
-                console.error('搜尋失敗:', error);
-                alert('搜尋失敗，請稍後再試');
-            } finally {
-                hideLoading();
-            }
+                alert('搜尋失敗：' + error.message);
+            } finally { hideLoading(); }
         }
 
-        // 套用篩選
         async function applyFilters() {
-            const keyword = document.getElementById('mainSearch').value.trim();
-            const sortBy = document.getElementById('sortBy').value;
-            const sortOrder = document.getElementById('sortOrder').value;
-            const minPrice = document.getElementById('minPrice').value;
-            const maxPrice = document.getElementById('maxPrice').value;
-            const minUnitPrice = document.getElementById('minUnitPrice').value;
-            const maxUnitPrice = document.getElementById('maxUnitPrice').value;
-            const minPing = document.getElementById('minPing').value;
-            const maxPing = document.getElementById('maxPing').value;
-            const minYear = document.getElementById('minYear').value;
-            const maxYear = document.getElementById('maxYear').value;
-            const minRatio = document.getElementById('minRatio').value;
-            const maxRatio = document.getElementById('maxRatio').value;
-            const buildingType = document.getElementById('buildingType').value;
-            const roomCount = document.getElementById('roomCount').value;
-            
             showLoading();
             try {
                 let url = `${API_BASE}/api/search?`;
-                
-                // 關鍵字
+                const keyword = document.getElementById('mainSearch').value.trim();
                 if (keyword) url += `keyword=${encodeURIComponent(keyword)}&`;
-                
-                // 排序
-                url += `sort_by=${sortBy}&sort_order=${sortOrder}&`;
-                
-                // 價格篩選
+                url += `sort_by=${document.getElementById('sortBy').value}&sort_order=${document.getElementById('sortOrder').value}&`;
+
+                const minPrice = document.getElementById('minPrice').value;
+                const maxPrice = document.getElementById('maxPrice').value;
                 if (minPrice) url += `min_price=${parseFloat(minPrice) * 10000}&`;
                 if (maxPrice) url += `max_price=${parseFloat(maxPrice) * 10000}&`;
-                
-                // 單價篩選（元/坪）
-                if (minUnitPrice) url += `min_unit_price=${parseFloat(minUnitPrice)}&`;
-                if (maxUnitPrice) url += `max_unit_price=${parseFloat(maxUnitPrice)}&`;
-                
-                // 坪數篩選
+
+                const minUP = document.getElementById('minUnitPrice').value;
+                const maxUP = document.getElementById('maxUnitPrice').value;
+                if (minUP) url += `min_unit_price=${parseFloat(minUP)}&`;
+                if (maxUP) url += `max_unit_price=${parseFloat(maxUP)}&`;
+
+                const minPing = document.getElementById('minPing').value;
+                const maxPing = document.getElementById('maxPing').value;
                 if (minPing) url += `min_ping=${parseFloat(minPing)}&`;
                 if (maxPing) url += `max_ping=${parseFloat(maxPing)}&`;
-                
-                // 年份篩選（轉換為民國年）
+
+                const minYear = document.getElementById('minYear').value;
+                const maxYear = document.getElementById('maxYear').value;
                 if (minYear) url += `min_year=${parseInt(minYear) - 1911}&`;
                 if (maxYear) url += `max_year=${parseInt(maxYear) - 1911}&`;
-                
-                // 公設比篩選
-                if (minRatio) url += `min_ratio=${parseFloat(minRatio)}&`;
-                if (maxRatio) url += `max_ratio=${parseFloat(maxRatio)}&`;
-                
-                // 建物型態篩選
-                if (buildingType) url += `building_type=${encodeURIComponent(buildingType)}&`;
-                
-                // 房數篩選
-                if (roomCount) url += `room_count=${roomCount}&`;
-                
+
+                const minR = document.getElementById('minRatio').value;
+                const maxR = document.getElementById('maxRatio').value;
+                if (minR) url += `min_ratio=${parseFloat(minR)}&`;
+                if (maxR) url += `max_ratio=${parseFloat(maxR)}&`;
+
+                const bt = document.getElementById('buildingType').value;
+                if (bt) url += `building_type=${encodeURIComponent(bt)}&`;
+                const rc = document.getElementById('roomCount').value;
+                if (rc) url += `room_count=${rc}&`;
+
                 const response = await fetch(url);
                 const result = await response.json();
-                
                 if (result.success) {
                     projects = result.projects;
                     displayProjects(projects);
                     addMarkersToMap(projects);
-                } else {
-                    console.error('篩選失敗:', result.error);
-                    alert('篩選失敗：' + result.error);
                 }
-            } catch (error) {
-                console.error('篩選失敗:', error);
-                alert('篩選失敗，請稍後再試');
-            } finally {
-                hideLoading();
-            }
+            } catch (error) { alert('篩選失敗：' + error.message); }
+            finally { hideLoading(); }
         }
-        
-        // 清除篩選
+
         function resetFilters() {
             document.getElementById('mainSearch').value = '';
             document.getElementById('sortBy').value = 'transaction_count';
@@ -1172,67 +635,38 @@
             document.getElementById('maxRatio').value = '';
             document.getElementById('buildingType').value = '';
             document.getElementById('roomCount').value = '';
-            
             loadAllProjects();
         }
 
-        // 工具函數
-        function geocodeAddress(geocoder, address) {
-            return new Promise((resolve) => {
-                geocoder.geocode({ address: address + ', 台灣' }, (results, status) => {
-                    resolve(status === 'OK' && results[0] ? results[0] : null);
-                });
-            });
-        }
-
-        function clearMarkers() {
-            markers.forEach(marker => marker.setMap(null));
-            markers = [];
-        }
-
+        // ===================== 工具函數 =====================
         function getPriceColor(price) {
             if (price < 10000000) return '#4caf50';
             if (price < 20000000) return '#2196f3';
             if (price < 50000000) return '#ff9800';
             return '#f44336';
         }
-
         function formatPrice(price) {
             const num = parseFloat(price) || 0;
             if (num >= 100000000) return (num / 100000000).toFixed(2) + ' 億元';
             if (num >= 10000) return (num / 10000).toFixed(0) + ' 萬元';
             return num.toFixed(0) + ' 元';
         }
-
         function formatPriceShort(price) {
             const num = parseFloat(price) || 0;
             if (num >= 100000000) return (num / 100000000).toFixed(1) + '億';
             if (num >= 10000) return (num / 10000).toFixed(0) + '萬';
             return num.toFixed(0);
         }
+        function resetMapView() { map.setView([25.0330, 121.5654], 12); }
+        function showLoading() { document.getElementById('loadingOverlay').classList.remove('hidden'); }
+        function hideLoading() { document.getElementById('loadingOverlay').classList.add('hidden'); }
 
-        function resetMapView() {
-            map.setCenter({ lat: 25.0330, lng: 121.5654 });
-            map.setZoom(12);
-        }
-
-        function showLoading() {
-            document.getElementById('loadingOverlay').classList.remove('hidden');
-        }
-
-        function hideLoading() {
-            document.getElementById('loadingOverlay').classList.add('hidden');
-        }
-
-        // 點擊模態框外部關閉
         document.getElementById('salesModal').addEventListener('click', function(e) {
-            if (e.target === this) {
-                closeModal();
-            }
+            if (e.target === this) closeModal();
         });
-    </script>
 
-    <!-- Google Maps API -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initMap&language=zh-TW" async defer></script>
+        // ===================== 啟動 =====================
+        document.addEventListener('DOMContentLoaded', initMap);
+    </script>
 </body>
 </html>

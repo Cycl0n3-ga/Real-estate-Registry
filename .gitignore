@@ -26,4 +26,12 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# 大型資料檔
 ALL_lvr_land_a.csv
+
+# 環境變數（含敏感資訊）
+.env
+.env.local
+.env.production
+app.py.bak
+app.log
