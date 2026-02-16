@@ -538,8 +538,8 @@
         </div>
         <div class="nav-actions">
             <div class="unit-toggle">
-                <button class="unit-btn active" id="unitBtnSqm" onclick="setUnit('sqm')">㎡</button>
-                <button class="unit-btn" id="unitBtnPing" onclick="setUnit('ping')">坪</button>
+                <button class="unit-btn" id="unitBtnSqm" onclick="setUnit('sqm')">㎡</button>
+                <button class="unit-btn active" id="unitBtnPing" onclick="setUnit('ping')">坪</button>
             </div>
             <button class="nav-btn" onclick="loadAllProjects()">🔄 重新載入</button>
         </div>
@@ -553,6 +553,24 @@
             <div class="filter-section">
                 <div class="filter-title">🎯 進階篩選</div>
                 
+                <!-- 排序 -->
+                <div class="filter-group">
+                    <div class="filter-label">🔄 排序方式</div>
+                    <select id="sortBy" class="filter-input" onchange="applyFilters()" style="width: 100%; margin-bottom: 8px;">
+                        <option value="transaction_count">交易筆數（預設）</option>
+                        <option value="date">成交日期</option>
+                        <option value="price">成交金額</option>
+                        <option value="unit_price">單價</option>
+                        <option value="area">坪數</option>
+                        <option value="ratio">公設比</option>
+                    </select>
+                    <select id="sortOrder" class="filter-input" onchange="applyFilters()" style="width: 100%;">
+                        <option value="desc">由高到低</option>
+                        <option value="asc">由低到高</option>
+                    </select>
+                </div>
+                
+                <!-- 總價 -->
                 <div class="filter-group">
                     <div class="filter-label">總價範圍（萬元）</div>
                     <div class="filter-row">
@@ -561,15 +579,70 @@
                     </div>
                 </div>
                 
+                <!-- 單價 -->
                 <div class="filter-group">
-                    <div class="filter-label" id="unitPriceLabel">單價範圍（元/㎡）</div>
+                    <div class="filter-label" id="unitPriceLabel">單價範圍（元/坪）</div>
                     <div class="filter-row">
                         <input type="number" id="minUnitPrice" class="filter-input" placeholder="最低">
                         <input type="number" id="maxUnitPrice" class="filter-input" placeholder="最高">
                     </div>
                 </div>
                 
+                <!-- 坪數 -->
+                <div class="filter-group">
+                    <div class="filter-label" id="areaLabel">坪數範圍（坪）</div>
+                    <div class="filter-row">
+                        <input type="number" id="minPing" class="filter-input" placeholder="最低">
+                        <input type="number" id="maxPing" class="filter-input" placeholder="最高">
+                    </div>
+                </div>
+                
+                <!-- 年份 -->
+                <div class="filter-group">
+                    <div class="filter-label">成交年份（西元）</div>
+                    <div class="filter-row">
+                        <input type="number" id="minYear" class="filter-input" placeholder="最早" value="2020">
+                        <input type="number" id="maxYear" class="filter-input" placeholder="最晚" value="2026">
+                    </div>
+                </div>
+                
+                <!-- 公設比 -->
+                <div class="filter-group">
+                    <div class="filter-label">公設比範圍（%）</div>
+                    <div class="filter-row">
+                        <input type="number" id="minRatio" class="filter-input" placeholder="最低">
+                        <input type="number" id="maxRatio" class="filter-input" placeholder="最高">
+                    </div>
+                </div>
+                
+                <!-- 建物型態 -->
+                <div class="filter-group">
+                    <div class="filter-label">建物型態</div>
+                    <select id="buildingType" class="filter-input" style="width: 100%;">
+                        <option value="">全部</option>
+                        <option value="住宅大樓">住宅大樓</option>
+                        <option value="華廈">華廈</option>
+                        <option value="公寓">公寓</option>
+                        <option value="透天厝">透天厝</option>
+                        <option value="套房">套房</option>
+                    </select>
+                </div>
+                
+                <!-- 房數 -->
+                <div class="filter-group">
+                    <div class="filter-label">房數</div>
+                    <select id="roomCount" class="filter-input" style="width: 100%;">
+                        <option value="">全部</option>
+                        <option value="1">1房</option>
+                        <option value="2">2房</option>
+                        <option value="3">3房</option>
+                        <option value="4">4房</option>
+                        <option value="5">5房以上</option>
+                    </select>
+                </div>
+                
                 <button class="apply-filter-btn" onclick="applyFilters()">套用篩選</button>
+                <button class="apply-filter-btn" onclick="resetFilters()" style="background: #95a5a6; margin-top: 8px;">清除篩選</button>
             </div>
 
             <!-- 建案列表 -->
@@ -758,7 +831,9 @@
             
             const html = projectList.map(project => {
                 const unitPrice = convertUnitPrice(project.avg_unit_price);
-                const avgArea = convertArea(project.avg_area);
+                const avgPing = project.avg_ping ? project.avg_ping.toFixed(2) : '0.00';
+                const ratio = project.avg_ratio ? project.avg_ratio.toFixed(1) : '-';
+                const latestDate = project.latest_date || '-';
                 
                 return `
                     <div class="project-card ${selectedProjectId === project.id ? 'active' : ''}" 
@@ -774,19 +849,19 @@
                         <div class="project-stats">
                             <div class="stat-item">
                                 <span class="stat-label">單價:</span>
-                                ${unitPrice} ${getUnitPriceText()}
+                                ${unitPrice} 元/坪
                             </div>
                             <div class="stat-item">
-                                <span class="stat-label">面積:</span>
-                                ${avgArea} ${getUnitText()}
+                                <span class="stat-label">坪數:</span>
+                                ${avgPing} 坪
                             </div>
                             <div class="stat-item">
-                                <span class="stat-label">最低:</span>
-                                ${formatPriceShort(project.min_price)}
+                                <span class="stat-label">公設比:</span>
+                                ${ratio}%
                             </div>
                             <div class="stat-item">
-                                <span class="stat-label">最高:</span>
-                                ${formatPriceShort(project.max_price)}
+                                <span class="stat-label">最新:</span>
+                                ${latestDate}
                             </div>
                         </div>
                     </div>
@@ -799,26 +874,21 @@
         // 在地圖上添加標記
         async function addMarkersToMap(projectList) {
             clearMarkers();
-            const geocoder = new google.maps.Geocoder();
             const bounds = new google.maps.LatLngBounds();
             
-            for (let i = 0; i < Math.min(projectList.length, 100); i++) {
+            for (let i = 0; i < Math.min(projectList.length, 200); i++) {
                 const project = projectList[i];
                 
                 try {
-                    const results = await geocodeAddress(geocoder, project.address);
-                    if (results) {
-                        const position = results.geometry.location;
+                    // 使用 API 提供的座標
+                    if (project.lat && project.lng) {
+                        const position = {lat: project.lat, lng: project.lng};
                         const marker = createProjectMarker(position, project);
                         markers.push(marker);
                         bounds.extend(position);
                     }
                 } catch (error) {
-                    console.error('地理編碼失敗:', error);
-                }
-                
-                if (i % 10 === 9) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    console.error('創建標記失敗:', error);
                 }
             }
             
@@ -1014,24 +1084,57 @@
 
         // 套用篩選
         async function applyFilters() {
+            const keyword = document.getElementById('mainSearch').value.trim();
+            const sortBy = document.getElementById('sortBy').value;
+            const sortOrder = document.getElementById('sortOrder').value;
             const minPrice = document.getElementById('minPrice').value;
             const maxPrice = document.getElementById('maxPrice').value;
-            let minUnitPrice = document.getElementById('minUnitPrice').value;
-            let maxUnitPrice = document.getElementById('maxUnitPrice').value;
-            
-            // 如果是坪數，轉換回平方公尺單價
-            if (currentUnit === 'ping') {
-                if (minUnitPrice) minUnitPrice = parseFloat(minUnitPrice) * 10000 / PING_TO_SQM;
-                if (maxUnitPrice) maxUnitPrice = parseFloat(maxUnitPrice) * 10000 / PING_TO_SQM;
-            }
+            const minUnitPrice = document.getElementById('minUnitPrice').value;
+            const maxUnitPrice = document.getElementById('maxUnitPrice').value;
+            const minPing = document.getElementById('minPing').value;
+            const maxPing = document.getElementById('maxPing').value;
+            const minYear = document.getElementById('minYear').value;
+            const maxYear = document.getElementById('maxYear').value;
+            const minRatio = document.getElementById('minRatio').value;
+            const maxRatio = document.getElementById('maxRatio').value;
+            const buildingType = document.getElementById('buildingType').value;
+            const roomCount = document.getElementById('roomCount').value;
             
             showLoading();
             try {
                 let url = `${API_BASE}/api/search?`;
+                
+                // 關鍵字
+                if (keyword) url += `keyword=${encodeURIComponent(keyword)}&`;
+                
+                // 排序
+                url += `sort_by=${sortBy}&sort_order=${sortOrder}&`;
+                
+                // 價格篩選
                 if (minPrice) url += `min_price=${parseFloat(minPrice) * 10000}&`;
                 if (maxPrice) url += `max_price=${parseFloat(maxPrice) * 10000}&`;
-                if (minUnitPrice) url += `min_unit_price=${minUnitPrice}&`;
-                if (maxUnitPrice) url += `max_unit_price=${maxUnitPrice}&`;
+                
+                // 單價篩選（元/坪）
+                if (minUnitPrice) url += `min_unit_price=${parseFloat(minUnitPrice)}&`;
+                if (maxUnitPrice) url += `max_unit_price=${parseFloat(maxUnitPrice)}&`;
+                
+                // 坪數篩選
+                if (minPing) url += `min_ping=${parseFloat(minPing)}&`;
+                if (maxPing) url += `max_ping=${parseFloat(maxPing)}&`;
+                
+                // 年份篩選（轉換為民國年）
+                if (minYear) url += `min_year=${parseInt(minYear) - 1911}&`;
+                if (maxYear) url += `max_year=${parseInt(maxYear) - 1911}&`;
+                
+                // 公設比篩選
+                if (minRatio) url += `min_ratio=${parseFloat(minRatio)}&`;
+                if (maxRatio) url += `max_ratio=${parseFloat(maxRatio)}&`;
+                
+                // 建物型態篩選
+                if (buildingType) url += `building_type=${encodeURIComponent(buildingType)}&`;
+                
+                // 房數篩選
+                if (roomCount) url += `room_count=${roomCount}&`;
                 
                 const response = await fetch(url);
                 const result = await response.json();
@@ -1050,6 +1153,27 @@
             } finally {
                 hideLoading();
             }
+        }
+        
+        // 清除篩選
+        function resetFilters() {
+            document.getElementById('mainSearch').value = '';
+            document.getElementById('sortBy').value = 'transaction_count';
+            document.getElementById('sortOrder').value = 'desc';
+            document.getElementById('minPrice').value = '';
+            document.getElementById('maxPrice').value = '';
+            document.getElementById('minUnitPrice').value = '';
+            document.getElementById('maxUnitPrice').value = '';
+            document.getElementById('minPing').value = '';
+            document.getElementById('maxPing').value = '';
+            document.getElementById('minYear').value = '2020';
+            document.getElementById('maxYear').value = '2026';
+            document.getElementById('minRatio').value = '';
+            document.getElementById('maxRatio').value = '';
+            document.getElementById('buildingType').value = '';
+            document.getElementById('roomCount').value = '';
+            
+            loadAllProjects();
         }
 
         // 工具函數

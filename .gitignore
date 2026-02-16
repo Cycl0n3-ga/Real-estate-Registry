@@ -1,7 +1,8 @@
-# 環境變數
-.env
-.env.local
-.env.*.local
+# 忽略日誌文件
+*.log
+app.log
+server.log
+nohup.out
 
 # Python
 __pycache__/
@@ -9,29 +10,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# 虛擬環境
+env/
 venv/
 ENV/
-env/
 .venv
 
 # IDE
@@ -40,13 +21,9 @@ env/
 *.swp
 *.swo
 *~
+
+# OS
 .DS_Store
+Thumbs.db
 
-# Git LFS
-*.csv filter=lfs diff=lfs merge=lfs -text
-ALL_lvr_land_a.csv filter=lfs diff=lfs merge=lfs -text
-
-# 大文件
-*.zip
-*.tar.gz
-*.rar
+ALL_lvr_land_a.csv
