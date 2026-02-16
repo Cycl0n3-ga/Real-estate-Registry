@@ -633,7 +633,8 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:5000';
+        // 動態設定 API 基礎 URL，支援任何地址訪問
+        const API_BASE = `${window.location.protocol}//${window.location.host}`;
         const SQM_TO_PING = 0.3025; // 1平方公尺 = 0.3025坪
         const PING_TO_SQM = 3.3058; // 1坪 = 3.3058平方公尺
         
