@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>房地產價格地圖查詢</title>
+    <style>
+        body {
+            font-family: 'Microsoft JhengHei', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            margin: 0 0 10px 0;
+        }
+        .search-box {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .search-input {
+            width: 70%;
+            padding: 12px;
+            font-size: 16px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            margin-right: 10px;
+        }
+        .search-btn {
+            padding: 12px 30px;
+            font-size: 16px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        .search-btn:hover {
+            background: #5568d3;
+        }
+        .content {
+            display: flex;
+            gap: 20px;
+        }
+        #map {
+            flex: 1;
+            height: 600px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .sidebar {
+            width: 350px;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .property-card {
+            border: 1px solid #eee;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+        .property-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+        }
+        .property-card.selected {
+            border-color: #667eea;
+            background: #f0f4ff;
+        }
+        .price {
+            font-size: 24px;
+            color: #e74c3c;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .address {
+            color: #333;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        .detail {
+            color: #666;
+            font-size: 14px;
+            margin: 5px 0;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+        .stats {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .stats h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        .export-btn {
+            padding: 10px 20px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 10px;
+        }
+        .export-btn:hover {
+            background: #218838;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏠 房地產價格地圖查詢系統</h1>
+            <p>輸入地址關鍵字，在地圖上查看房地產交易資訊</p>
+        </div>
+
+        <div class="search-box">
+            <input type="text" 
+                   id="locationInput" 
+                   class="search-input" 
+                   placeholder="請輸入地址關鍵字，例如：日興一街６號" 
+                   onkeypress="if(event.key==='Enter') searchProperties()">
+            <button class="search-btn" onclick="searchProperties()">🔍 搜尋</button>
+        </div>
+
+        <div class="content">
+            <div id="map"></div>
+            <div class="sidebar">
+                <div id="stats" style="display:none;">
+                    <div class="stats">
+                        <h3>📊 統計資訊</h3>
+                        <div class="stat-item">
+                            <span>物件數量：</span>
+                            <span id="totalCount">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>平均總價：</span>
+                            <span id="avgPrice">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>平均單價：</span>
+                            <span id="avgUnitPrice">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>最高價格：</span>
+                            <span id="maxPrice">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>最低價格：</span>
+                            <span id="minPrice">0</span>
+                        </div>
+                    </div>
+                    <button class="export-btn" onclick="exportToCSV()">📥 匯出CSV</button>
+                </div>
+                <div id="propertyList"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let map;
+        let markers = [];
+        let propertiesData = [];
+        let infoWindow;
+
+        // 初始化地圖
+        function initMap() {
+            // 預設中心：台灣台北
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 25.0330, lng: 121.5654 },
+                zoom: 12,
+                styles: [
+                    {
+                        featureType: "poi",
+                        elementType: "labels",
+                        stylers: [{ visibility: "off" }]
+                    }
+                ]
+            });
+            infoWindow = new google.maps.InfoWindow();
+        }
+
+        // 搜尋物件
+        async function searchProperties() {
+            const location = document.getElementById('locationInput').value.trim();
+            if (!location) {
+                alert('請輸入地址關鍵字');
+                return;
+            }
+
+            document.getElementById('propertyList').innerHTML = '<div class="loading">⏳ 搜尋中...</div>';
+            document.getElementById('stats').style.display = 'none';
+
+            try {
+                // 讀取CSV並過濾數據
+                const response = await fetch('/home/cyclone/land/ALL_lvr_land_a.csv');
+                const csvText = await response.text();
+                const rows = parseCSV(csvText);
+                
+                // 過濾符合地址的物件
+                propertiesData = rows.filter(row => 
+                    row['土地位置建物門牌'] && row['土地位置建物門牌'].includes(location)
+                );
+
+                if (propertiesData.length === 0) {
+                    document.getElementById('propertyList').innerHTML = '<div class="loading">😔 找不到符合的物件</div>';
+                    return;
+                }
+
+                // 清除舊標記
+                clearMarkers();
+
+                // 顯示統計資訊
+                displayStats();
+
+                // 顯示物件列表
+                displayProperties();
+
+                // 在地圖上標記
+                await addMarkersToMap();
+
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('propertyList').innerHTML = '<div class="loading">❌ 載入失敗：' + error.message + '</div>';
+            }
+        }
+
+        // 解析CSV
+        function parseCSV(text) {
+            const lines = text.split('\n');
+            const headers = lines[0].split(',').map(h => h.trim());
+            const data = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i].trim()) continue;
+                
+                const values = parseCSVLine(lines[i]);
+                const row = {};
+                headers.forEach((header, index) => {
+                    row[header] = values[index] ? values[index].trim() : '';
+                });
+                data.push(row);
+            }
+            return data;
+        }
+
+        // 解析CSV行（處理引號內的逗號）
+        function parseCSVLine(line) {
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    result.push(current);
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current);
+            return result;
+        }
+
+        // 顯示統計資訊
+        function displayStats() {
+            const prices = propertiesData.map(p => parseFloat(p['總價元']) || 0).filter(p => p > 0);
+            const unitPrices = propertiesData.map(p => parseFloat(p['單價元平方公尺']) || 0).filter(p => p > 0);
+
+            if (prices.length > 0) {
+                document.getElementById('totalCount').textContent = propertiesData.length;
+                document.getElementById('avgPrice').textContent = formatPrice(average(prices));
+                document.getElementById('avgUnitPrice').textContent = formatNumber(average(unitPrices)) + ' 元/㎡';
+                document.getElementById('maxPrice').textContent = formatPrice(Math.max(...prices));
+                document.getElementById('minPrice').textContent = formatPrice(Math.min(...prices));
+                document.getElementById('stats').style.display = 'block';
+            }
+        }
+
+        // 顯示物件列表
+        function displayProperties() {
+            const listHtml = propertiesData.map((property, index) => {
+                const price = formatPrice(property['總價元']);
+                const unitPrice = formatNumber(property['單價元平方公尺']);
+                const area = formatNumber(property['建物移轉總面積平方公尺']);
+                const address = property['土地位置建物門牌'] || '地址不詳';
+                const type = property['建物型態'] || '未註明';
+                const date = property['交易年月日'] || '未註明';
+
+                return `
+                    <div class="property-card" id="card-${index}" onclick="selectProperty(${index})">
+                        <div class="address">📍 ${address}</div>
+                        <div class="price">${price}</div>
+                        <div class="detail">💰 單價：${unitPrice} 元/㎡</div>
+                        <div class="detail">📐 面積：${area} ㎡</div>
+                        <div class="detail">🏗️ 類型：${type}</div>
+                        <div class="detail">📅 交易日期：${date}</div>
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('propertyList').innerHTML = listHtml;
+        }
+
+        // 在地圖上添加標記
+        async function addMarkersToMap() {
+            const geocoder = new google.maps.Geocoder();
+            const bounds = new google.maps.LatLngBounds();
+            let geocodePromises = [];
+
+            for (let i = 0; i < propertiesData.length; i++) {
+                const property = propertiesData[i];
+                const address = property['土地位置建物門牌'];
+                
+                if (!address) continue;
+
+                const promise = new Promise((resolve) => {
+                    geocoder.geocode({ address: address + ', 台灣' }, (results, status) => {
+                        if (status === 'OK' && results[0]) {
+                            const position = results[0].geometry.location;
+                            const price = formatPrice(property['總價元']);
+                            
+                            const marker = new google.maps.Marker({
+                                position: position,
+                                map: map,
+                                title: address,
+                                label: {
+                                    text: `${i + 1}`,
+                                    color: 'white',
+                                    fontSize: '12px',
+                                    fontWeight: 'bold'
+                                },
+                                icon: {
+                                    path: google.maps.SymbolPath.CIRCLE,
+                                    scale: 15,
+                                    fillColor: getPriceColor(property['總價元']),
+                                    fillOpacity: 0.8,
+                                    strokeColor: 'white',
+                                    strokeWeight: 2
+                                }
+                            });
+
+                            marker.addListener('click', () => {
+                                selectProperty(i);
+                            });
+
+                            markers.push(marker);
+                            bounds.extend(position);
+                        }
+                        resolve();
+                    });
+                });
+
+                geocodePromises.push(promise);
+
+                // 避免超過Google API限制，每10個請求暫停一下
+                if (i % 10 === 9) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+
+            await Promise.all(geocodePromises);
+
+            if (markers.length > 0) {
+                map.fitBounds(bounds);
+            }
+        }
+
+        // 選擇物件
+        function selectProperty(index) {
+            // 更新卡片樣式
+            document.querySelectorAll('.property-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            document.getElementById(`card-${index}`).classList.add('selected');
+
+            // 捲動到選中的卡片
+            document.getElementById(`card-${index}`).scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+            // 顯示資訊窗口
+            if (markers[index]) {
+                const property = propertiesData[index];
+                const content = `
+                    <div style="padding: 10px; max-width: 300px;">
+                        <h3 style="margin-top: 0; color: #667eea;">${property['土地位置建物門牌']}</h3>
+                        <p style="font-size: 20px; color: #e74c3c; font-weight: bold; margin: 10px 0;">
+                            ${formatPrice(property['總價元'])}
+                        </p>
+                        <p><strong>單價：</strong>${formatNumber(property['單價元平方公尺'])} 元/㎡</p>
+                        <p><strong>面積：</strong>${formatNumber(property['建物移轉總面積平方公尺'])} ㎡</p>
+                        <p><strong>類型：</strong>${property['建物型態'] || '未註明'}</p>
+                        <p><strong>交易日期：</strong>${property['交易年月日'] || '未註明'}</p>
+                        <p><strong>樓層：</strong>${property['移轉層次'] || '未註明'} / ${property['總樓層數'] || '未註明'}</p>
+                    </div>
+                `;
+                infoWindow.setContent(content);
+                infoWindow.open(map, markers[index]);
+                map.panTo(markers[index].getPosition());
+                map.setZoom(Math.max(map.getZoom(), 16));
+            }
+        }
+
+        // 清除標記
+        function clearMarkers() {
+            markers.forEach(marker => marker.setMap(null));
+            markers = [];
+        }
+
+        // 根據價格獲取顏色
+        function getPriceColor(priceStr) {
+            const price = parseFloat(priceStr) || 0;
+            if (price < 5000000) return '#2ecc71';      // 綠色 - 低價
+            if (price < 10000000) return '#f39c12';     // 橙色 - 中價
+            if (price < 20000000) return '#e67e22';     // 深橙 - 中高價
+            return '#e74c3c';                            // 紅色 - 高價
+        }
+
+        // 格式化價格
+        function formatPrice(price) {
+            const num = parseFloat(price) || 0;
+            if (num >= 100000000) {
+                return (num / 100000000).toFixed(2) + ' 億元';
+            } else if (num >= 10000) {
+                return (num / 10000).toFixed(0) + ' 萬元';
+            }
+            return num.toFixed(0) + ' 元';
+        }
+
+        // 格式化數字
+        function formatNumber(num) {
+            const n = parseFloat(num) || 0;
+            return n.toFixed(2);
+        }
+
+        // 計算平均值
+        function average(arr) {
+            return arr.reduce((a, b) => a + b, 0) / arr.length;
+        }
+
+        // 匯出CSV
+        function exportToCSV() {
+            if (propertiesData.length === 0) {
+                alert('沒有資料可以匯出');
+                return;
+            }
+
+            const headers = Object.keys(propertiesData[0]);
+            const csvContent = [
+                headers.join(','),
+                ...propertiesData.map(row => 
+                    headers.map(header => {
+                        const value = row[header] || '';
+                        return value.includes(',') ? `"${value}"` : value;
+                    }).join(',')
+                )
+            ].join('\n');
+
+            const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `房地產查詢結果_${new Date().toISOString().slice(0,10)}.csv`;
+            link.click();
+        }
+    </script>
+
+    <!-- Google Maps API -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap&language=zh-TW" async defer></script>
+</body>
+</html>
