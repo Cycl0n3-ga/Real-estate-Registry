@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-樂居 - 專業房地產地圖系統
+良富居地產 - 專業房地產地圖系統
 整合建案地圖、價格查詢、銷控面板
 """
 
@@ -45,7 +45,7 @@ def extract_building_name(address):
 @app.route('/')
 def index():
     """主頁面"""
-    with open('leju_map.html', 'r', encoding='utf-8') as f:
+    with open('liangfu_map.html', 'r', encoding='utf-8') as f:
         html_content = f.read()
     api_key = os.getenv('GOOGLE_MAPS_API_KEY', '')
     html_content = html_content.replace('YOUR_GOOGLE_MAPS_API_KEY', api_key)
@@ -293,7 +293,7 @@ def search_projects():
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("🏢 樂居專業房地產地圖系統")
+    print("🏢 良富居地產專業房地產地圖系統")
     print("=" * 60)
     print(f"CSV 文件: {CSV_PATH}")
     print(f"服務器啟動於: http://localhost:5000")

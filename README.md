@@ -1,6 +1,6 @@
-# 🏠 樂居 - 專業房地產地圖系統
+# 🏠 良富居地產 - 專業房地產地圖系統
 
-一個類似 leju.com.tw 的專業房地產交易地圖系統，提供建案查詢、價格分析、銷控面板等功能。
+一個專業房地產交易地圖系統，提供建案查詢、價格分析、銷控面板等功能。
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
