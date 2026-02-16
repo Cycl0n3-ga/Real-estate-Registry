@@ -1,211 +1,292 @@
-# 房地產價格地圖查詢系統
+# 🏠 樂居 - 專業房地產地圖系統
 
-## 📋 系統說明
+一個類似 leju.com.tw 的專業房地產交易地圖系統，提供建案查詢、價格分析、銷控面板等功能。
 
-這是一個房地產交易資訊視覺化系統，可以在Google地圖上標記房地產交易位置並顯示價格資訊。
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
+![Flask](https://img.shields.io/badge/flask-3.0+-green.svg)
 
-## 🚀 使用方式
+## ✨ 功能特色
 
-### 方案一：Flask 後端版本（推薦）
+### 🗺️ 互動式地圖
+- **建案標記**：在 Google Maps 上顯示所有建案位置
+- **價格分層**：使用不同顏色標記不同價格範圍
+  - 🟢 綠色：< 1000萬
+  - 🔵 藍色：1000萬 - 2000萬
+  - 🟠 橙色：2000萬 - 5000萬
+  - 🔴 紅色：> 5000萬
+- **集群展示**：相近建案自動聚合顯示
 
-這個方案使用 Python Flask + DuckDB 提供高效的查詢服務。
+### 📊 銷控面板
+- **樓層銷售狀態**：視覺化顯示每個樓層的交易狀態
+- **交易記錄**：完整的歷史交易資料
+- **統計資訊**：
+  - 總交易數
+  - 平均總價
+  - 平均單價
+  - 平均面積
 
-#### 1. 安裝必要套件
+### 🔄 單位切換
+- **㎡/坪切換**：一鍵切換平方公尺與坪數顯示
+- **自動轉換**：所有面積和單價自動轉換
+  - 1 坪 = 3.3058 平方公尺
+  - 單價自動換算（元/㎡ ↔ 萬元/坪）
+
+### 🎯 進階篩選
+- **總價範圍**：設定最低/最高總價
+- **單價範圍**：依單價篩選（支援㎡和坪）
+- **關鍵字搜尋**：搜尋地址、建案名稱
+
+### 📱 響應式設計
+- 現代化 UI 設計
+- 流暢的動畫效果
+- 直覺的操作介面
+
+## 🚀 快速開始
+
+### 環境需求
 
 ```bash
 pip install flask flask-cors duckdb
 ```
 
-#### 2. 啟動服務器
+### 環境需求
 
+- Python 3.8+
+- pip
+
+### 安裝步驟
+
+1. **克隆專案**
 ```bash
-cd /home/cyclone/land
-python3 map_server.py
+git clone https://github.com/YOUR_USERNAME/real-estate-map.git
+cd real-estate-map
 ```
 
-服務器會在 http://localhost:5000 啟動
-
-#### 3. 設定 Google Maps API Key
-
-編輯 `real_estate_map_flask.html` 文件，找到最後一行：
-
-```html
-<script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initMap&language=zh-TW" async defer></script>
+2. **安裝依賴**
+```bash
+pip install flask flask-cors duckdb python-dotenv
 ```
 
-將 `YOUR_GOOGLE_MAPS_API_KEY` 替換為你的 Google Maps API Key。
+3. **設定環境變數**
 
-#### 4. 開啟瀏覽器
+創建 `.env` 文件：
+```bash
+GOOGLE_MAPS_API_KEY=你的_API_KEY
+```
 
-在瀏覽器中訪問：http://localhost:5000
+4. **準備 CSV 數據**
 
-#### 5. 搜尋房地產
+確保 `ALL_lvr_land_a.csv` 文件在專案目錄中。
 
-輸入地址關鍵字（例如：日興一街６號），點擊搜尋按鈕。
+5. **啟動服務器**
+```bash
+python3 app.py
+```
 
-### 方案二：純前端版本
+6. **開啟瀏覽器**
 
-如果不想使用後端服務器，可以直接開啟 `real_estate_map.html`。
+訪問 http://localhost:5000
 
-**注意**：這個版本需要瀏覽器允許讀取本地 CSV 文件，可能需要使用本地 HTTP 服務器。
+## 📖 使用說明
 
-## 🎨 功能特色
+### 基本操作
 
-### ✨ 主要功能
+1. **瀏覽建案**
+   - 地圖上的彩色圓點代表不同建案
+   - 圓點顏色表示價格範圍
+   - 點擊圓點查看建案詳情
 
-1. **地圖標記**
-   - 在 Google 地圖上顯示房地產位置
-   - 使用顏色區分價格範圍
-   - 點擊標記查看詳細資訊
+2. **搜尋功能**
+   - 在頂部搜尋框輸入關鍵字
+   - 支援地址、建案名稱、地區搜尋
+   - 按 Enter 或點擊搜尋按鈕
 
-2. **價格分類**
-   - 🟢 綠色：< 500萬
-   - 🟠 橙色：500萬 - 1000萬
-   - 🟠 深橙：1000萬 - 2000萬
-   - 🔴 紅色：> 2000萬
+3. **單位切換**
+   - 點擊右上角 ㎡/坪 按鈕
+   - 所有面積和單價自動轉換
 
-3. **統計資訊**
-   - 物件數量
-   - 平均總價
-   - 平均單價
-   - 價格區間
+4. **進階篩選**
+   - 設定總價範圍（萬元）
+   - 設定單價範圍（依當前單位）
+   - 點擊「套用篩選」
 
-4. **物件列表**
-   - 顯示所有搜尋結果
-   - 點擊卡片定位到地圖
-   - 顯示詳細交易資訊
+5. **查看銷控面板**
+   - 點擊建案卡片或地圖標記
+   - 查看完整交易記錄
+   - 瀏覽樓層銷售狀態
 
-5. **資料匯出**
-   - 匯出 CSV 格式
-   - 包含所有查詢結果
+### 快捷鍵
+
+- `Enter` - 執行搜尋
+- `Esc` - 關閉銷控面板
 
 ## 🔑 取得 Google Maps API Key
 
 1. 前往 [Google Cloud Console](https://console.cloud.google.com/)
 2. 創建新專案或選擇現有專案
-3. 啟用 "Maps JavaScript API" 和 "Geocoding API"
+3. 啟用以下 API：
+   - Maps JavaScript API
+   - Geocoding API
 4. 創建 API 憑證（API Key）
-5. 複製 API Key 並貼到 HTML 文件中
+5. 複製 API Key 到 `.env` 文件
 
-**免費額度**：Google Maps 每月提供 $200 美元的免費額度，通常足夠個人使用。
+**免費額度**：Google Maps 每月提供 $200 美元的免費額度。
 
-## 📊 資料欄位說明
+## 📂 專案結構
 
-系統會顯示以下房地產資訊：
-
-- **土地位置建物門牌**：物件地址
-- **總價元**：交易總價
-- **單價元平方公尺**：每平方公尺單價
-- **建物移轉總面積平方公尺**：建物面積
-- **建物型態**：公寓、華廈、住宅大樓等
-- **交易年月日**：交易日期
-- **移轉層次**：樓層資訊
-- **建物現況格局**：房廳衛數量
+```
+land/
+├── app.py                      # Flask 後端主程式
+├── leju_map.html              # 前端主頁面
+├── .env                       # 環境變數（不提交到 git）
+├── .gitignore                 # Git 忽略文件
+├── .gitattributes             # Git LFS 設定
+├── ALL_lvr_land_a.csv        # 房地產交易數據（git lfs）
+├── README.md                  # 本文件
+└── SETUP_GITHUB.md           # GitHub 設定說明
+```
 
 ## 🛠️ 技術架構
 
-### 後端（Flask版本）
-- **Flask**：Web 框架
-- **DuckDB**：高效能 CSV 查詢
-- **Flask-CORS**：跨域請求支援
+### 後端
+- **Flask** - Web 框架
+- **DuckDB** - 高效能 CSV 查詢引擎
+- **Flask-CORS** - 跨域請求支援
+- **python-dotenv** - 環境變數管理
 
 ### 前端
-- **Google Maps JavaScript API**：地圖顯示
-- **Geocoding API**：地址轉座標
-- **原生 JavaScript**：互動功能
+- **Google Maps JavaScript API** - 地圖顯示
+- **Geocoding API** - 地址轉座標
+- **原生 JavaScript** - 互動功能
+- **CSS3** - 現代化樣式
 
-## 📝 使用範例
+### 數據
+- 內政部不動產交易實價登錄資料
+- CSV 格式存儲
+- Git LFS 管理大文件
 
-### 搜尋範例關鍵字
+## 📊 API 端點
 
-- 街道名稱：`日興一街`、`信義路`
-- 區域：`信義區`、`大安區`
-- 完整地址：`日興一街６號`
+### GET /api/projects
+獲取所有建案列表（聚合數據）
 
-### API 端點（Flask版本）
-
-#### 搜尋房地產
-```
-GET /api/search?location=日興一街６號
-```
-
-#### 回應格式
+**回應範例：**
 ```json
 {
   "success": true,
-  "count": 10,
-  "data": [...],
-  "stats": {
-    "total_count": 10,
-    "avg_price": 15000000,
-    "max_price": 25000000,
-    "min_price": 8000000,
-    "avg_unit_price": 350000
-  }
+  "count": 200,
+  "projects": [
+    {
+      "id": 123456,
+      "name": "信義區豪宅",
+      "address": "台北市信義區...",
+      "avg_price": 35000000,
+      "avg_unit_price": 450000,
+      "transaction_count": 15
+    }
+  ]
 }
 ```
 
-## ⚠️ 注意事項
+### GET /api/project/{project_id}
+獲取建案詳細資訊和銷控數據
 
-1. **Google Maps API 限制**
-   - 每天有請求次數限制
-   - 建議不要一次查詢太多物件（系統限制最多50筆）
+**參數：**
+- `address` - 建案地址
 
-2. **地理編碼準確性**
-   - 依賴 Google Geocoding API
-   - 某些地址可能無法精確定位
+### GET /api/search
+搜尋建案
 
-3. **CSV 文件路徑**
-   - 確保 `ALL_lvr_land_a.csv` 文件存在
-   - Flask 版本預設路徑：`/home/cyclone/land/ALL_lvr_land_a.csv`
+**參數：**
+- `keyword` - 搜尋關鍵字
+- `min_price` - 最低總價
+- `max_price` - 最高總價
+- `min_unit_price` - 最低單價（元/㎡）
+- `max_unit_price` - 最高單價（元/㎡）
 
-4. **瀏覽器相容性**
-   - 建議使用 Chrome、Firefox、Edge 等現代瀏覽器
-   - 需要支援 ES6+ JavaScript
+## 🎨 自訂設定
+
+### 修改預設地圖中心
+編輯 `leju_map.html`：
+```javascript
+map = new google.maps.Map(document.getElementById('map'), {
+    center: { lat: 25.0330, lng: 121.5654 }, // 修改此處
+    zoom: 12
+});
+```
+
+### 調整價格顏色範圍
+編輯 `leju_map.html` 中的 `getPriceColor` 函數：
+```javascript
+function getPriceColor(price) {
+    if (price < 10000000) return '#4caf50';  // < 1000萬
+    if (price < 20000000) return '#2196f3';  // 1000萬 - 2000萬
+    if (price < 50000000) return '#ff9800';  // 2000萬 - 5000萬
+    return '#f44336';                         // > 5000萬
+}
+```
 
 ## 🐛 常見問題
 
-### Q: 地圖無法顯示？
-A: 檢查 Google Maps API Key 是否正確設定。
-
 ### Q: 搜尋沒有結果？
 A: 
-- 確認地址關鍵字是否正確
-- 檢查 CSV 文件是否包含該地址資料
+- 確認關鍵字拼寫正確
+- 嘗試使用更短的關鍵字
+- 檢查 CSV 文件是否包含該地區數據
 
-### Q: 標記位置不準確？
-A: 這是 Google Geocoding API 的限制，某些地址可能無法精確定位。
-
-### Q: Flask 服務器啟動失敗？
+### Q: 地圖無法顯示？
 A: 
-- 確認已安裝所有必要套件
-- 檢查 5000 端口是否被佔用
-- 確認 CSV 文件路徑正確
+- 檢查 Google Maps API Key 是否正確
+- 確認已啟用 Maps JavaScript API
+- 檢查瀏覽器控制台錯誤訊息
 
-## 📦 文件清單
+### Q: 單位轉換不準確？
+A: 
+- 系統使用 1 坪 = 3.3058 平方公尺
+- 這是標準建築單位換算
 
-- `real_estate_map_flask.html` - Flask 版本的前端頁面（推薦）
-- `map_server.py` - Flask 後端服務器
-- `real_estate_map.html` - 純前端版本（不需要後端）
-- `README.md` - 本說明文件
+### Q: CSV 文件太大無法上傳？
+A: 
+- 已使用 Git LFS 管理大文件
+- 確保已安裝 git-lfs：`sudo apt-get install git-lfs`
+- 執行：`git lfs install`
 
-## 🔄 未來改進
+## 🔄 更新日誌
 
-- [ ] 支援多個 CSV 文件
-- [ ] 加入進階篩選功能（價格範圍、面積範圍等）
-- [ ] 增加圖表統計視覺化
-- [ ] 支援歷史交易趨勢分析
-- [ ] 加入地區熱力圖
-- [ ] 支援比較功能
+### v2.0.0 (2026-02-16)
+- ✨ 新增單位切換功能（㎡/坪）
+- ✨ 整合建案地圖和銷控面板
+- ✨ 重新設計篩選功能（總價+單價）
+- 🐛 修復搜尋功能 SQL 注入問題
+- 🎨 改進 UI/UX 設計
+- 📝 完善文檔
 
-## 📧 技術支援
+### v1.0.0 (2026-02-15)
+- 🎉 初始版本發布
+- 基本地圖功能
+- 建案列表展示
 
-如有問題或建議，請參考：
-- Google Maps API 文件：https://developers.google.com/maps
-- DuckDB 文件：https://duckdb.org/docs/
-- Flask 文件：https://flask.palletsprojects.com/
+## 📄 授權
+
+MIT License - 詳見 [LICENSE](LICENSE)
+
+## 👥 貢獻
+
+歡迎提交 Pull Request 或開 Issue！
+
+## 📧 聯絡
+
+如有問題或建議，請開 Issue 或聯絡：
+- GitHub: [@YOUR_USERNAME](https://github.com/YOUR_USERNAME)
+
+## 🙏 致謝
+
+- 內政部不動產交易實價登錄資料
+- Google Maps Platform
+- DuckDB 團隊
+- Flask 社群
 
 ---
 
-**版本**：1.0.0  
-**更新日期**：2026-02-16
+**⭐ 如果這個專案對你有幫助，請給個星星！**
