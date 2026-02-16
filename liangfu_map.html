@@ -709,10 +709,18 @@
         async function loadAllProjects() {
             showLoading();
             try {
+                console.log(`正在連接到: ${API_BASE}/api/projects`);
                 const response = await fetch(`${API_BASE}/api/projects`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
+                }
+                
                 const result = await response.json();
+                console.log('API 回應:', result);
                 
                 if (result.success) {
+                    console.log(`成功載入 ${result.count} 個建案`);
                     projects = result.projects;
                     displayProjects(projects);
                     addMarkersToMap(projects);
@@ -722,7 +730,13 @@
                 }
             } catch (error) {
                 console.error('載入建案失敗:', error);
-                alert('載入建案失敗，請稍後再試');
+                console.error('詳細錯誤信息:', {
+                    message: error.message,
+                    name: error.name,
+                    apiBase: API_BASE,
+                    url: `${API_BASE}/api/projects`
+                });
+                alert(`載入建案失敗：${error.message}`);
             } finally {
                 hideLoading();
             }
