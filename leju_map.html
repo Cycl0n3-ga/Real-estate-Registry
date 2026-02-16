@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>樂居 - 專業房地產地圖系統</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Microsoft JhengHei', 'Segoe UI', Arial, sans-serif;
+            overflow: hidden;
+        }
+        
+        /* 頂部導航 */
+        .top-nav {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 15px 30px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 2000;
+            position: relative;
+        }
+        
+        .logo {
+            font-size: 28px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .search-bar {
+            flex: 1;
+            max-width: 500px;
+            margin: 0 30px;
+            position: relative;
+        }
+        
+        .search-input {
+            width: 100%;
+            padding: 12px 45px 12px 20px;
+            border: none;
+            border-radius: 25px;
+            font-size: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        
+        .search-btn {
+            position: absolute;
+            right: 5px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+            border: none;
+            padding: 8px 20px;
+            border-radius: 20px;
+            color: white;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        
+        .nav-actions {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        .unit-toggle {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
+            padding: 6px 4px;
+            border-radius: 20px;
+            display: flex;
+            gap: 4px;
+        }
+        
+        .unit-btn {
+            background: transparent;
+            border: none;
+            padding: 6px 16px;
+            border-radius: 16px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 13px;
+        }
+        
+        .unit-btn.active {
+            background: white;
+            color: #1e3c72;
+            font-weight: 600;
+        }
+        
+        .nav-btn {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            padding: 8px 20px;
+            border-radius: 20px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .nav-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        /* 主內容區 */
+        .main-container {
+            display: flex;
+            height: calc(100vh - 70px);
+        }
+        
+        /* 左側面板 */
+        .left-panel {
+            width: 400px;
+            background: white;
+            overflow-y: auto;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+        
+        .filter-section {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .filter-title {
+            font-weight: 600;
+            margin-bottom: 15px;
+            font-size: 16px;
+            color: #333;
+        }
+        
+        .filter-group {
+            margin-bottom: 15px;
+        }
+        
+        .filter-label {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 8px;
+            display: block;
+        }
+        
+        .filter-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .filter-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        
+        .apply-filter-btn {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        
+        .apply-filter-btn:hover {
+            opacity: 0.9;
+        }
+        
+        .projects-list {
+            padding: 15px;
+        }
+        
+        .project-card {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .project-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+        }
+        
+        .project-card.active {
+            border-color: #667eea;
+            background: linear-gradient(135deg, rgba(102,126,234,0.05) 0%, rgba(118,75,162,0.05) 100%);
+        }
+        
+        .project-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 10px;
+        }
+        
+        .project-name {
+            font-weight: 600;
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 5px;
+        }
+        
+        .project-badge {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .project-address {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        
+        .project-price {
+            font-size: 22px;
+            color: #e74c3c;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .project-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        
+        .stat-item {
+            font-size: 13px;
+            color: #666;
+        }
+        
+        .stat-label {
+            color: #999;
+            margin-right: 5px;
+        }
+        
+        /* 地圖區域 */
+        .map-container {
+            flex: 1;
+            position: relative;
+        }
+        
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* 地圖控制按鈕 */
+        .map-controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        .map-control-btn {
+            background: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            cursor: pointer;
+            font-size: 18px;
+            transition: all 0.3s;
+        }
+        
+        .map-control-btn:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        
+        /* 銷控面板模態框 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 3000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 1200px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        
+        .modal-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px 30px;
+            border-radius: 20px 20px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .modal-title {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        .close-btn {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            font-size: 28px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .close-btn:hover {
+            background: rgba(255,255,255,0.3);
+            transform: rotate(90deg);
+        }
+        
+        .modal-body {
+            padding: 30px;
+        }
+        
+        /* 建案詳情 */
+        .project-detail-header {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .detail-stat-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+        
+        .detail-stat-label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+        
+        .detail-stat-value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        /* 銷控表 */
+        .sales-control-section {
+            margin-top: 30px;
+        }
+        
+        .section-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #333;
+        }
+        
+        .sales-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .unit-cell {
+            aspect-ratio: 1;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            padding: 10px;
+        }
+        
+        .unit-cell.sold {
+            background: #ffebee;
+            border-color: #e74c3c;
+        }
+        
+        .unit-cell:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        
+        .unit-number {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        
+        .unit-price {
+            font-size: 11px;
+            color: #666;
+        }
+        
+        /* 交易記錄 */
+        .transactions-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        .transactions-table th {
+            background: #f5f5f5;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid #ddd;
+        }
+        
+        .transactions-table td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .transactions-table tr:hover {
+            background: #f9f9f9;
+        }
+        
+        /* 載入動畫 */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+        
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        /* 價格圖例 */
+        .price-legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+            font-size: 13px;
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 頂部導航 -->
+    <div class="top-nav">
+        <div class="logo">
+            🏠 樂居地產
+        </div>
+        <div class="search-bar">
+            <input type="text" 
+                   id="mainSearch" 
+                   class="search-input" 
+                   placeholder="搜尋地區、建案名稱、地址..."
+                   onkeypress="if(event.key==='Enter') performSearch()">
+            <button class="search-btn" onclick="performSearch()">搜尋</button>
+        </div>
+        <div class="nav-actions">
+            <div class="unit-toggle">
+                <button class="unit-btn active" id="unitBtnSqm" onclick="setUnit('sqm')">㎡</button>
+                <button class="unit-btn" id="unitBtnPing" onclick="setUnit('ping')">坪</button>
+            </div>
+            <button class="nav-btn" onclick="loadAllProjects()">🔄 重新載入</button>
+        </div>
+    </div>
+
+    <!-- 主內容區 -->
+    <div class="main-container">
+        <!-- 左側建案列表 -->
+        <div class="left-panel">
+            <!-- 篩選區 -->
+            <div class="filter-section">
+                <div class="filter-title">🎯 進階篩選</div>
+                
+                <div class="filter-group">
+                    <div class="filter-label">總價範圍（萬元）</div>
+                    <div class="filter-row">
+                        <input type="number" id="minPrice" class="filter-input" placeholder="最低">
+                        <input type="number" id="maxPrice" class="filter-input" placeholder="最高">
+                    </div>
+                </div>
+                
+                <div class="filter-group">
+                    <div class="filter-label" id="unitPriceLabel">單價範圍（元/㎡）</div>
+                    <div class="filter-row">
+                        <input type="number" id="minUnitPrice" class="filter-input" placeholder="最低">
+                        <input type="number" id="maxUnitPrice" class="filter-input" placeholder="最高">
+                    </div>
+                </div>
+                
+                <button class="apply-filter-btn" onclick="applyFilters()">套用篩選</button>
+            </div>
+
+            <!-- 建案列表 -->
+            <div class="projects-list" id="projectsList">
+                <div style="text-align: center; padding: 40px 20px; color: #999;">
+                    <div style="font-size: 48px; margin-bottom: 15px;">🏢</div>
+                    <p>載入建案中...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右側地圖 -->
+        <div class="map-container">
+            <div id="loadingOverlay" class="loading-overlay">
+                <div class="loading-spinner"></div>
+            </div>
+            
+            <div id="map"></div>
+            
+            <!-- 地圖控制 -->
+            <div class="map-controls">
+                <button class="map-control-btn" onclick="map.setZoom(map.getZoom() + 1)" title="放大">+</button>
+                <button class="map-control-btn" onclick="map.setZoom(map.getZoom() - 1)" title="縮小">-</button>
+                <button class="map-control-btn" onclick="resetMapView()" title="重置">🎯</button>
+            </div>
+            
+            <!-- 價格圖例 -->
+            <div class="price-legend">
+                <div style="font-weight: 600; margin-bottom: 10px;">💰 價格範圍</div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #4caf50;"></div>
+                    <span>&lt; 1000萬</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #2196f3;"></div>
+                    <span>1000萬 - 2000萬</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ff9800;"></div>
+                    <span>2000萬 - 5000萬</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #f44336;"></div>
+                    <span>&gt; 5000萬</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 銷控面板模態框 -->
+    <div id="salesModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title" id="modalTitle">建案銷控面板</div>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- 動態載入內容 -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:5000';
+        const SQM_TO_PING = 0.3025; // 1平方公尺 = 0.3025坪
+        const PING_TO_SQM = 3.3058; // 1坪 = 3.3058平方公尺
+        
+        let map, infoWindow;
+        let markers = [];
+        let projects = [];
+        let selectedProjectId = null;
+        let currentUnit = 'sqm'; // 'sqm' 或 'ping'
+
+        // 初始化地圖
+        function initMap() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 25.0330, lng: 121.5654 },
+                zoom: 12,
+                styles: [
+                    {
+                        featureType: "poi.business",
+                        stylers: [{ visibility: "off" }]
+                    }
+                ],
+                mapTypeControl: false,
+                streetViewControl: false
+            });
+            
+            infoWindow = new google.maps.InfoWindow();
+            
+            loadAllProjects();
+            hideLoading();
+        }
+
+        // 設定單位
+        function setUnit(unit) {
+            currentUnit = unit;
+            document.getElementById('unitBtnSqm').classList.toggle('active', unit === 'sqm');
+            document.getElementById('unitBtnPing').classList.toggle('active', unit === 'ping');
+            
+            // 更新標籤
+            const label = document.getElementById('unitPriceLabel');
+            label.textContent = unit === 'sqm' ? '單價範圍（元/㎡）' : '單價範圍（萬元/坪）';
+            
+            // 重新顯示列表
+            if (projects.length > 0) {
+                displayProjects(projects);
+            }
+        }
+
+        // 轉換面積
+        function convertArea(sqm) {
+            return currentUnit === 'ping' ? (sqm * SQM_TO_PING).toFixed(2) : sqm.toFixed(2);
+        }
+
+        // 轉換單價
+        function convertUnitPrice(pricePerSqm) {
+            if (currentUnit === 'ping') {
+                // 元/坪 = 元/㎡ × 3.3058 / 10000 萬
+                return ((pricePerSqm * PING_TO_SQM) / 10000).toFixed(2);
+            }
+            return pricePerSqm.toFixed(2);
+        }
+
+        // 獲取單位文字
+        function getUnitText() {
+            return currentUnit === 'ping' ? '坪' : '㎡';
+        }
+
+        // 獲取單價單位文字
+        function getUnitPriceText() {
+            return currentUnit === 'ping' ? '萬/坪' : '元/㎡';
+        }
+
+        // 載入所有建案
+        async function loadAllProjects() {
+            showLoading();
+            try {
+                const response = await fetch(`${API_BASE}/api/projects`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    projects = result.projects;
+                    displayProjects(projects);
+                    addMarkersToMap(projects);
+                } else {
+                    console.error('載入失敗:', result.error);
+                    alert('載入建案失敗：' + result.error);
+                }
+            } catch (error) {
+                console.error('載入建案失敗:', error);
+                alert('載入建案失敗，請稍後再試');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // 顯示建案列表
+        function displayProjects(projectList) {
+            const container = document.getElementById('projectsList');
+            
+            if (projectList.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 40px 20px; color: #999;">
+                        <div style="font-size: 48px; margin-bottom: 15px;">😔</div>
+                        <p>找不到符合條件的建案</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            const html = projectList.map(project => {
+                const unitPrice = convertUnitPrice(project.avg_unit_price);
+                const avgArea = convertArea(project.avg_area);
+                
+                return `
+                    <div class="project-card ${selectedProjectId === project.id ? 'active' : ''}" 
+                         onclick="selectProject(${project.id}, '${project.address.replace(/'/g, "\\'")}')">
+                        <div class="project-header">
+                            <div>
+                                <div class="project-name">${project.name}</div>
+                                <div class="project-address">📍 ${project.address}</div>
+                            </div>
+                            <div class="project-badge">${project.transaction_count} 筆</div>
+                        </div>
+                        <div class="project-price">${formatPrice(project.avg_price)}</div>
+                        <div class="project-stats">
+                            <div class="stat-item">
+                                <span class="stat-label">單價:</span>
+                                ${unitPrice} ${getUnitPriceText()}
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">面積:</span>
+                                ${avgArea} ${getUnitText()}
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">最低:</span>
+                                ${formatPriceShort(project.min_price)}
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">最高:</span>
+                                ${formatPriceShort(project.max_price)}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            container.innerHTML = html;
+        }
+
+        // 在地圖上添加標記
+        async function addMarkersToMap(projectList) {
+            clearMarkers();
+            const geocoder = new google.maps.Geocoder();
+            const bounds = new google.maps.LatLngBounds();
+            
+            for (let i = 0; i < Math.min(projectList.length, 100); i++) {
+                const project = projectList[i];
+                
+                try {
+                    const results = await geocodeAddress(geocoder, project.address);
+                    if (results) {
+                        const position = results.geometry.location;
+                        const marker = createProjectMarker(position, project);
+                        markers.push(marker);
+                        bounds.extend(position);
+                    }
+                } catch (error) {
+                    console.error('地理編碼失敗:', error);
+                }
+                
+                if (i % 10 === 9) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            }
+            
+            if (markers.length > 0) {
+                map.fitBounds(bounds);
+            }
+        }
+
+        // 創建建案標記
+        function createProjectMarker(position, project) {
+            const priceColor = getPriceColor(project.avg_price);
+            const priceShort = formatPriceShort(project.avg_price);
+            
+            const marker = new google.maps.Marker({
+                position: position,
+                map: map,
+                title: project.name,
+                label: {
+                    text: priceShort,
+                    color: 'white',
+                    fontSize: '11px',
+                    fontWeight: 'bold'
+                },
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 18,
+                    fillColor: priceColor,
+                    fillOpacity: 0.9,
+                    strokeColor: 'white',
+                    strokeWeight: 3
+                }
+            });
+            
+            marker.addListener('click', () => {
+                selectProject(project.id, project.address);
+            });
+            
+            return marker;
+        }
+
+        // 選擇建案
+        function selectProject(projectId, address) {
+            selectedProjectId = projectId;
+            displayProjects(projects);
+            showProjectDetail(projectId, address);
+        }
+
+        // 顯示建案詳情（銷控面板）
+        async function showProjectDetail(projectId, address) {
+            document.getElementById('modalTitle').textContent = '載入中...';
+            document.getElementById('salesModal').classList.add('active');
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/project/${projectId}?address=${encodeURIComponent(address)}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    const project = result.project;
+                    renderProjectDetail(project);
+                } else {
+                    document.getElementById('modalBody').innerHTML = `<p style="text-align:center;padding:40px;">載入失敗：${result.error}</p>`;
+                }
+            } catch (error) {
+                console.error('載入建案詳情失敗:', error);
+                document.getElementById('modalBody').innerHTML = '<p style="text-align:center;padding:40px;">載入失敗</p>';
+            }
+        }
+
+        // 渲染建案詳情
+        function renderProjectDetail(project) {
+            const transactions = project.transactions;
+            const salesControl = project.sales_control;
+            
+            document.getElementById('modalTitle').textContent = transactions[0]['土地位置建物門牌'];
+            
+            const avgPrice = transactions.reduce((sum, t) => sum + (parseFloat(t['總價元']) || 0), 0) / transactions.length;
+            const avgUnitPrice = transactions.reduce((sum, t) => sum + (parseFloat(t['單價元平方公尺']) || 0), 0) / transactions.length;
+            const avgArea = transactions.reduce((sum, t) => sum + (parseFloat(t['建物移轉總面積平方公尺']) || 0), 0) / transactions.length;
+            
+            let html = `
+                <div class="project-detail-header">
+                    <div class="detail-stat-card">
+                        <div class="detail-stat-label">總交易數</div>
+                        <div class="detail-stat-value">${salesControl.total_units}</div>
+                    </div>
+                    <div class="detail-stat-card">
+                        <div class="detail-stat-label">平均總價</div>
+                        <div class="detail-stat-value">${formatPriceShort(avgPrice)}</div>
+                    </div>
+                    <div class="detail-stat-card">
+                        <div class="detail-stat-label">平均單價</div>
+                        <div class="detail-stat-value">${convertUnitPrice(avgUnitPrice)}<br><span style="font-size:14px;">${getUnitPriceText()}</span></div>
+                    </div>
+                    <div class="detail-stat-card">
+                        <div class="detail-stat-label">平均面積</div>
+                        <div class="detail-stat-value">${convertArea(avgArea)}<br><span style="font-size:14px;">${getUnitText()}</span></div>
+                    </div>
+                </div>
+                
+                <div class="sales-control-section">
+                    <div class="section-title">📋 交易記錄銷控表</div>
+                    <div class="sales-grid">
+            `;
+            
+            transactions.forEach((trans, index) => {
+                const price = parseFloat(trans['總價元']) || 0;
+                html += `
+                    <div class="unit-cell sold" title="${trans['交易年月日']}">
+                        <div class="unit-number">${trans['移轉層次']}樓</div>
+                        <div class="unit-price">${formatPriceShort(price)}</div>
+                    </div>
+                `;
+            });
+            
+            html += `
+                    </div>
+                </div>
+                
+                <div style="margin-top: 30px;">
+                    <div class="section-title">📊 詳細交易記錄</div>
+                    <table class="transactions-table">
+                        <thead>
+                            <tr>
+                                <th>交易日期</th>
+                                <th>樓層</th>
+                                <th>格局</th>
+                                <th>面積</th>
+                                <th>總價</th>
+                                <th>單價</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            transactions.forEach(trans => {
+                const area = parseFloat(trans['建物移轉總面積平方公尺']) || 0;
+                const unitPrice = parseFloat(trans['單價元平方公尺']) || 0;
+                
+                html += `
+                    <tr>
+                        <td>${trans['交易年月日'] || '-'}</td>
+                        <td>${trans['移轉層次'] || '-'}/${trans['總樓層數'] || '-'}</td>
+                        <td>${trans['房'] || '-'}房${trans['廳'] || '-'}廳${trans['衛'] || '-'}衛</td>
+                        <td>${convertArea(area)} ${getUnitText()}</td>
+                        <td style="color: #e74c3c; font-weight: 600;">${formatPrice(trans['總價元'])}</td>
+                        <td>${convertUnitPrice(unitPrice)} ${getUnitPriceText()}</td>
+                    </tr>
+                `;
+            });
+            
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            
+            document.getElementById('modalBody').innerHTML = html;
+        }
+
+        // 關閉模態框
+        function closeModal() {
+            document.getElementById('salesModal').classList.remove('active');
+        }
+
+        // 搜尋
+        async function performSearch() {
+            const keyword = document.getElementById('mainSearch').value.trim();
+            if (!keyword) {
+                loadAllProjects();
+                return;
+            }
+            
+            showLoading();
+            try {
+                const response = await fetch(`${API_BASE}/api/search?keyword=${encodeURIComponent(keyword)}`);
+                const result = await response.json();
+                
+                if (result.success) {
+                    projects = result.projects;
+                    displayProjects(projects);
+                    addMarkersToMap(projects);
+                } else {
+                    console.error('搜尋失敗:', result.error);
+                    alert('搜尋失敗：' + result.error);
+                }
+            } catch (error) {
+                console.error('搜尋失敗:', error);
+                alert('搜尋失敗，請稍後再試');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // 套用篩選
+        async function applyFilters() {
+            const minPrice = document.getElementById('minPrice').value;
+            const maxPrice = document.getElementById('maxPrice').value;
+            let minUnitPrice = document.getElementById('minUnitPrice').value;
+            let maxUnitPrice = document.getElementById('maxUnitPrice').value;
+            
+            // 如果是坪數，轉換回平方公尺單價
+            if (currentUnit === 'ping') {
+                if (minUnitPrice) minUnitPrice = parseFloat(minUnitPrice) * 10000 / PING_TO_SQM;
+                if (maxUnitPrice) maxUnitPrice = parseFloat(maxUnitPrice) * 10000 / PING_TO_SQM;
+            }
+            
+            showLoading();
+            try {
+                let url = `${API_BASE}/api/search?`;
+                if (minPrice) url += `min_price=${parseFloat(minPrice) * 10000}&`;
+                if (maxPrice) url += `max_price=${parseFloat(maxPrice) * 10000}&`;
+                if (minUnitPrice) url += `min_unit_price=${minUnitPrice}&`;
+                if (maxUnitPrice) url += `max_unit_price=${maxUnitPrice}&`;
+                
+                const response = await fetch(url);
+                const result = await response.json();
+                
+                if (result.success) {
+                    projects = result.projects;
+                    displayProjects(projects);
+                    addMarkersToMap(projects);
+                } else {
+                    console.error('篩選失敗:', result.error);
+                    alert('篩選失敗：' + result.error);
+                }
+            } catch (error) {
+                console.error('篩選失敗:', error);
+                alert('篩選失敗，請稍後再試');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // 工具函數
+        function geocodeAddress(geocoder, address) {
+            return new Promise((resolve) => {
+                geocoder.geocode({ address: address + ', 台灣' }, (results, status) => {
+                    resolve(status === 'OK' && results[0] ? results[0] : null);
+                });
+            });
+        }
+
+        function clearMarkers() {
+            markers.forEach(marker => marker.setMap(null));
+            markers = [];
+        }
+
+        function getPriceColor(price) {
+            if (price < 10000000) return '#4caf50';
+            if (price < 20000000) return '#2196f3';
+            if (price < 50000000) return '#ff9800';
+            return '#f44336';
+        }
+
+        function formatPrice(price) {
+            const num = parseFloat(price) || 0;
+            if (num >= 100000000) return (num / 100000000).toFixed(2) + ' 億元';
+            if (num >= 10000) return (num / 10000).toFixed(0) + ' 萬元';
+            return num.toFixed(0) + ' 元';
+        }
+
+        function formatPriceShort(price) {
+            const num = parseFloat(price) || 0;
+            if (num >= 100000000) return (num / 100000000).toFixed(1) + '億';
+            if (num >= 10000) return (num / 10000).toFixed(0) + '萬';
+            return num.toFixed(0);
+        }
+
+        function resetMapView() {
+            map.setCenter({ lat: 25.0330, lng: 121.5654 });
+            map.setZoom(12);
+        }
+
+        function showLoading() {
+            document.getElementById('loadingOverlay').classList.remove('hidden');
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingOverlay').classList.add('hidden');
+        }
+
+        // 點擊模態框外部關閉
+        document.getElementById('salesModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeModal();
+            }
+        });
+    </script>
+
+    <!-- Google Maps API -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&callback=initMap&language=zh-TW" async defer></script>
+</body>
+</html>
