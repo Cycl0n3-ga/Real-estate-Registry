@@ -328,7 +328,7 @@
             <div class="map-controls">
                 <button class="map-control-btn" onclick="map.zoomIn()" title="放大">+</button>
                 <button class="map-control-btn" onclick="map.zoomOut()" title="縮小">−</button>
-                <button class="map-control-btn" onclick="locateUser()" title="定位到我">📍</button>
+                <button class="map-control-btn" onclick="resetMapView()" title="重置">🎯</button>
             </div>
         </div>
     </div>
@@ -346,10 +346,7 @@
 
     <script>
         // ===================== 全局變數 =====================
-        // 自動偵測 API 基礎 URL - 支援本地和遠程訪問
-        const API_BASE = window.location.hostname === 'localhost' 
-            ? 'http://localhost:5000'
-            : `http://${window.location.hostname}:5000`;
+        const API_BASE = 'http://localhost:5000';
         const PING_TO_SQM = 3.3057;
         const SQM_TO_PING = 1 / PING_TO_SQM;
 
@@ -728,68 +725,6 @@
             return num.toFixed(0);
         }
         function resetMapView() { map.setView([25.0330, 121.5654], 12); }
-        
-        function locateUser() {
-            if (!navigator.geolocation) {
-                alert('您的瀏覽器不支援地理定位功能');
-                return;
-            }
-            
-            const btn = event.target.closest('.map-control-btn');
-            const originalText = btn.textContent;
-            btn.textContent = '⏳';
-            btn.disabled = true;
-            
-            navigator.geolocation.getCurrentPosition(
-                function(position) {
-                    const lat = position.coords.latitude;
-                    const lng = position.coords.longitude;
-                    const accuracy = position.coords.accuracy;
-                    
-                    // 導航到用戶位置，縮放到 16 級（較近）
-                    map.setView([lat, lng], 16);
-                    
-                    // 添加臨時標記顯示用戶位置
-                    const userMarker = L.circleMarker([lat, lng], {
-                        radius: 8,
-                        fillColor: '#2196F3',
-                        color: '#1976D2',
-                        weight: 3,
-                        opacity: 0.8,
-                        fillOpacity: 0.7
-                    }).addTo(map);
-                    
-                    // 2 秒後移除標記
-                    setTimeout(() => userMarker.remove(), 3000);
-                    
-                    btn.textContent = originalText;
-                    btn.disabled = false;
-                },
-                function(error) {
-                    let msg = '無法獲取您的位置';
-                    switch(error.code) {
-                        case error.PERMISSION_DENIED:
-                            msg = '位置權限被拒絕，請在瀏覽器設定中允許定位';
-                            break;
-                        case error.POSITION_UNAVAILABLE:
-                            msg = '定位服務暫時不可用';
-                            break;
-                        case error.TIMEOUT:
-                            msg = '定位請求超時';
-                            break;
-                    }
-                    alert(msg);
-                    btn.textContent = originalText;
-                    btn.disabled = false;
-                },
-                {
-                    enableHighAccuracy: true,
-                    timeout: 10000,
-                    maximumAge: 0
-                }
-            );
-        }
-        
         function showLoading() { document.getElementById('loadingOverlay').classList.remove('hidden'); }
         function hideLoading() { document.getElementById('loadingOverlay').classList.add('hidden'); }
 

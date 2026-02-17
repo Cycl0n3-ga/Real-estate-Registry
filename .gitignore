@@ -26,12 +26,21 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# 大型資料檔
+# 大型資料檔 (>100MB)
 ALL_lvr_land_a.csv
+ALL_lvr_land_b.csv
+land_data.duckdb
+
+# 備份文件
+*.bak
+*.bak2
+*.bak3
+*.old
+
+# 緩存文件
+geocode_cache.json
 
 # 環境變數（含敏感資訊）
 .env
 .env.local
 .env.production
-app.py.bak
-app.log
