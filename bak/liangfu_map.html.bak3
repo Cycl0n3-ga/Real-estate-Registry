@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>良富居地產 v2.0 — 實價登錄地圖</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<style>
+:root {
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --primary-light: #dbeafe;
+  --secondary: #7c3aed;
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --bg: #f1f5f9;
+  --card: #ffffff;
+  --text: #1e293b;
+  --text-secondary: #64748b;
+  --border: #e2e8f0;
+  --shadow: 0 1px 3px rgba(0,0,0,.1), 0 1px 2px rgba(0,0,0,.06);
+  --shadow-lg: 0 10px 25px rgba(0,0,0,.12);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font: 'Segoe UI', 'Microsoft JhengHei', -apple-system, sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);overflow:hidden;color:var(--text)}
+
+/* ─── 頂部導航 ─── */
+.navbar{
+  height:60px;display:flex;align-items:center;padding:0 20px;gap:16px;
+  background:linear-gradient(135deg,var(--primary) 0%,var(--secondary) 100%);
+  color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.2);z-index:2000;position:relative;
+}
+.logo{font-size:22px;font-weight:700;white-space:nowrap;display:flex;align-items:center;gap:8px}
+.logo-icon{font-size:26px}
+.search-box{flex:1;max-width:480px;position:relative}
+.search-input{
+  width:100%;padding:10px 44px 10px 16px;border:none;border-radius:24px;
+  font-size:14px;background:rgba(255,255,255,.95);color:var(--text);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.05);outline:none;
+}
+.search-input::placeholder{color:var(--text-secondary)}
+.search-input:focus{box-shadow:0 0 0 3px rgba(255,255,255,.4)}
+.search-btn{
+  position:absolute;right:4px;top:50%;transform:translateY(-50%);
+  background:var(--danger);border:none;border-radius:20px;color:#fff;
+  padding:7px 18px;cursor:pointer;font-weight:600;font-size:13px;
+  transition:.2s;
+}
+.search-btn:hover{opacity:.85}
+.nav-stats{
+  font-size:12px;opacity:.85;white-space:nowrap;display:flex;gap:12px;
+  align-items:center;
+}
+.nav-stats span{display:flex;align-items:center;gap:4px}
+
+/* ─── 主容器 ─── */
+.main{display:flex;height:calc(100vh - 60px)}
+
+/* ─── 左側面板 ─── */
+.sidebar{
+  width:420px;background:var(--card);display:flex;flex-direction:column;
+  border-right:1px solid var(--border);z-index:1000;
+}
+.sidebar-tabs{
+  display:flex;border-bottom:2px solid var(--border);background:var(--bg);flex-shrink:0;
+}
+.sidebar-tab{
+  flex:1;padding:12px;text-align:center;font-size:13px;font-weight:600;
+  cursor:pointer;border-bottom:3px solid transparent;transition:.2s;
+  color:var(--text-secondary);background:transparent;border:none;
+}
+.sidebar-tab.active{color:var(--primary);border-bottom-color:var(--primary);background:#fff}
+.sidebar-tab:hover{color:var(--primary)}
+
+/* 篩選面板 */
+.filter-panel{padding:16px;border-bottom:1px solid var(--border);flex-shrink:0;display:none}
+.filter-panel.show{display:block}
+.filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.filter-group{display:flex;flex-direction:column;gap:4px}
+.filter-group.full{grid-column:1/-1}
+.filter-label{font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px}
+.filter-input,.filter-select{
+  padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);
+  font-size:13px;background:#fff;color:var(--text);outline:none;width:100%;
+}
+.filter-input:focus,.filter-select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-light)}
+.filter-row{display:flex;gap:6px}
+.filter-row .filter-input{flex:1}
+.filter-actions{display:flex;gap:8px;margin-top:8px;grid-column:1/-1}
+.btn{
+  padding:9px 16px;border:none;border-radius:var(--radius-sm);font-size:13px;
+  font-weight:600;cursor:pointer;transition:.2s;flex:1;text-align:center;
+}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-dark)}
+.btn-secondary{background:var(--bg);color:var(--text-secondary);border:1px solid var(--border)}
+.btn-secondary:hover{background:var(--border)}
+
+/* 結果統計 */
+.results-header{
+  padding:10px 16px;border-bottom:1px solid var(--border);font-size:12px;
+  color:var(--text-secondary);display:flex;justify-content:space-between;
+  align-items:center;flex-shrink:0;background:var(--bg);
+}
+
+/* 建案列表 */
+.projects-list{flex:1;overflow-y:auto;padding:8px}
+
+/* 建案卡片 */
+.card{
+  background:#fff;border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px;margin-bottom:8px;cursor:pointer;transition:.15s;position:relative;
+}
+.card:hover{box-shadow:var(--shadow-lg);transform:translateY(-1px);border-color:var(--primary)}
+.card.active{border-color:var(--primary);background:var(--primary-light)}
+.card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.card-name{font-size:15px;font-weight:700;color:var(--text);line-height:1.3}
+.card-badge{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;
+  white-space:nowrap;flex-shrink:0;
+}
+.badge-tx{background:var(--primary-light);color:var(--primary)}
+.badge-special{background:#fef3c7;color:#92400e}
+.badge-presale{background:#dbeafe;color:#1e40af}
+.card-address{font-size:12px;color:var(--text-secondary);margin:6px 0;display:flex;align-items:center;gap:4px}
+.card-price{font-size:20px;font-weight:800;color:var(--danger);margin:8px 0 4px}
+.card-stats{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.card-stat{font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:4px}
+.card-stat b{color:var(--text);font-weight:600}
+.card-type{
+  display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;
+  font-weight:600;background:#f1f5f9;color:var(--text-secondary);margin-top:6px;
+}
+.card-year{font-size:11px;color:var(--text-secondary);margin-top:4px}
+
+/* ─── 地圖 ─── */
+.map-wrap{flex:1;position:relative}
+#map{width:100%;height:100%}
+.map-overlay{
+  position:absolute;top:0;left:0;right:0;bottom:0;
+  background:rgba(255,255,255,.9);display:flex;justify-content:center;
+  align-items:center;z-index:1500;flex-direction:column;gap:12px;
+}
+.spinner{
+  width:40px;height:40px;border:4px solid var(--border);
+  border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.map-overlay.hidden{display:none}
+.map-overlay p{font-size:14px;color:var(--text-secondary)}
+
+/* 圖例 */
+.legend{
+  position:absolute;bottom:20px;left:12px;background:#fff;padding:12px 14px;
+  border-radius:var(--radius);box-shadow:var(--shadow-lg);z-index:1000;font-size:12px;
+}
+.legend-title{font-weight:700;margin-bottom:8px;font-size:13px}
+.legend-item{display:flex;align-items:center;gap:6px;margin:4px 0}
+.legend-dot{width:14px;height:14px;border-radius:50%;flex-shrink:0}
+
+/* 地圖標記 */
+.price-marker{background:transparent !important;border:none !important}
+.marker-dot{
+  width:32px;height:32px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;color:#fff;font-size:9px;font-weight:700;
+  border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);
+  line-height:1;
+}
+
+/* ─── 模態框 ─── */
+.modal-bg{
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);
+  z-index:3000;justify-content:center;align-items:center;
+}
+.modal-bg.show{display:flex}
+.modal{
+  background:#fff;border-radius:var(--radius);width:94%;max-width:1100px;
+  max-height:92vh;display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 20px 60px rgba(0,0,0,.3);
+}
+.modal-head{
+  background:linear-gradient(135deg,var(--primary),var(--secondary));
+  color:#fff;padding:20px 24px;display:flex;justify-content:space-between;
+  align-items:center;flex-shrink:0;
+}
+.modal-head h2{font-size:20px;font-weight:700}
+.modal-head .sub{font-size:13px;opacity:.8;margin-top:2px}
+.close-btn{
+  width:36px;height:36px;border-radius:50%;border:none;background:rgba(255,255,255,.2);
+  color:#fff;font-size:22px;cursor:pointer;transition:.2s;display:flex;align-items:center;
+  justify-content:center;
+}
+.close-btn:hover{background:rgba(255,255,255,.35);transform:rotate(90deg)}
+
+/* 模態框統計 */
+.modal-stats{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:12px;padding:20px 24px;background:var(--bg);border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.stat-card{
+  background:#fff;border-radius:var(--radius-sm);padding:14px;text-align:center;
+  border:1px solid var(--border);
+}
+.stat-card .label{font-size:11px;color:var(--text-secondary);font-weight:600;margin-bottom:4px;text-transform:uppercase}
+.stat-card .value{font-size:22px;font-weight:800;color:var(--text)}
+.stat-card .value.danger{color:var(--danger)}
+.stat-card .value.warning{color:var(--warning)}
+
+/* 交易表格 */
+.modal-body{flex:1;overflow-y:auto;padding:20px 24px}
+.section-title{font-size:16px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead{position:sticky;top:0;z-index:1}
+th{
+  background:var(--bg);padding:10px 12px;text-align:left;font-weight:600;
+  border-bottom:2px solid var(--border);color:var(--text-secondary);
+  font-size:12px;white-space:nowrap;
+}
+td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:hover td{background:#f8fafc}
+tr.special-row{background:#fffbeb}
+tr.special-row:hover td{background:#fef3c7}
+.special-tags{display:flex;gap:4px;flex-wrap:wrap}
+.special-tag{
+  display:inline-flex;align-items:center;gap:2px;
+  padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;
+  white-space:nowrap;
+}
+.price-cell{color:var(--danger);font-weight:700}
+.floor-cell{font-weight:600}
+.note-cell{max-width:200px;font-size:11px;color:var(--text-secondary);word-break:break-all}
+
+/* 無資料 */
+.empty{text-align:center;padding:60px 20px;color:var(--text-secondary)}
+.empty-icon{font-size:48px;margin-bottom:12px}
+.empty p{font-size:14px}
+
+/* 載入更多 */
+.load-more{
+  display:block;width:100%;padding:12px;text-align:center;
+  background:var(--bg);border:1px dashed var(--border);border-radius:var(--radius-sm);
+  color:var(--text-secondary);cursor:pointer;font-size:13px;margin-top:8px;
+}
+.load-more:hover{background:var(--primary-light);color:var(--primary);border-color:var(--primary)}
+
+/* scrollbar */
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#94a3b8}
+
+/* geocode 狀態 */
+.geocode-status{
+  position:absolute;top:12px;left:12px;z-index:1000;background:#fff;
+  padding:8px 14px;border-radius:var(--radius-sm);box-shadow:var(--shadow);
+  font-size:12px;color:var(--text-secondary);display:none;
+}
+.geocode-status.show{display:flex;align-items:center;gap:6px}
+.pulse{width:8px;height:8px;border-radius:50%;background:var(--success);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+</style>
+</head>
+<body>
+
+<!-- 導航欄 -->
+<nav class="navbar">
+  <div class="logo"><span class="logo-icon">🏠</span>良富居地產</div>
+  <div class="search-box">
+    <input type="text" id="searchInput" class="search-input"
+           placeholder="搜尋建案名稱、地區、地址…"
+           onkeydown="if(event.key==='Enter')doSearch()">
+    <button class="search-btn" onclick="doSearch()">🔍 搜尋</button>
+  </div>
+  <div class="nav-stats" id="navStats">
+    <span>📊 <b id="statProjects">0</b> 建案</span>
+    <span>📍 <b id="statGeocoded">—</b></span>
+  </div>
+</nav>
+
+<div class="main">
+  <!-- 左側面板 -->
+  <aside class="sidebar">
+    <div class="sidebar-tabs">
+      <button class="sidebar-tab active" onclick="switchTab('list',this)">🏢 建案列表</button>
+      <button class="sidebar-tab" onclick="switchTab('filter',this)">🎯 篩選條件</button>
+    </div>
+
+    <!-- 篩選面板 -->
+    <div class="filter-panel" id="filterPanel">
+      <div class="filter-grid">
+        <div class="filter-group full">
+          <div class="filter-label">排序方式</div>
+          <div class="filter-row">
+            <select id="sortBy" class="filter-select">
+              <option value="transaction_count">交易筆數</option>
+              <option value="price">成交金額</option>
+              <option value="unit_price">單價</option>
+              <option value="area">坪數</option>
+            </select>
+            <select id="sortOrder" class="filter-select" style="max-width:100px">
+              <option value="desc">高→低</option>
+              <option value="asc">低→高</option>
+            </select>
+          </div>
+        </div>
+        <div class="filter-group">
+          <div class="filter-label">總價下限（萬）</div>
+          <input type="number" id="minPrice" class="filter-input" placeholder="不限">
+        </div>
+        <div class="filter-group">
+          <div class="filter-label">總價上限（萬）</div>
+          <input type="number" id="maxPrice" class="filter-input" placeholder="不限">
+        </div>
+        <div class="filter-group">
+          <div class="filter-label">坪數下限</div>
+          <input type="number" id="minPing" class="filter-input" placeholder="不限">
+        </div>
+        <div class="filter-group">
+          <div class="filter-label">坪數上限</div>
+          <input type="number" id="maxPing" class="filter-input" placeholder="不限">
+        </div>
+        <div class="filter-group full">
+          <div class="filter-label">鄉鎮市區</div>
+          <select id="districtFilter" class="filter-select">
+            <option value="">全部</option>
+          </select>
+        </div>
+        <div class="filter-group full">
+          <div class="filter-label">建物型態</div>
+          <select id="typeFilter" class="filter-select">
+            <option value="">全部</option>
+            <option value="住宅大樓">住宅大樓</option>
+            <option value="華廈">華廈</option>
+            <option value="公寓">公寓</option>
+            <option value="透天厝">透天厝</option>
+            <option value="套房">套房</option>
+            <option value="店面">店面</option>
+          </select>
+        </div>
+        <div class="filter-actions">
+          <button class="btn btn-primary" onclick="applyFilters()">套用篩選</button>
+          <button class="btn btn-secondary" onclick="resetFilters()">清除</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 結果統計 -->
+    <div class="results-header">
+      <span id="resultsCount">載入中…</span>
+      <span id="resultsPage"></span>
+    </div>
+
+    <!-- 建案列表 -->
+    <div class="projects-list" id="projectsList">
+      <div class="empty">
+        <div class="empty-icon">🏢</div>
+        <p>載入建案中…</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 地圖 -->
+  <div class="map-wrap">
+    <div id="mapLoading" class="map-overlay">
+      <div class="spinner"></div>
+      <p>載入地圖…</p>
+    </div>
+    <div id="map"></div>
+    <div class="legend">
+      <div class="legend-title">💰 價格範圍</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#16a34a"></div> &lt; 800萬</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#2563eb"></div> 800–1500萬</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#d97706"></div> 1500–3000萬</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#dc2626"></div> &gt; 3000萬</div>
+      <div class="legend-item" style="margin-top:6px"><div class="legend-dot" style="background:#7c3aed"></div> 預售屋</div>
+    </div>
+    <div id="geocodeStatus" class="geocode-status">
+      <div class="pulse"></div>
+      <span>座標定位中…</span>
+    </div>
+  </div>
+</div>
+
+<!-- 建案詳情模態框 -->
+<div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <h2 id="modalTitle">建案名稱</h2>
+        <div class="sub" id="modalSub"></div>
+      </div>
+      <button class="close-btn" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-stats" id="modalStats"></div>
+    <div class="modal-body" id="modalBody">
+      <div class="empty"><div class="spinner"></div><p style="margin-top:12px">載入交易紀錄…</p></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = `${location.protocol}//${location.host}`;
+const PING_TO_SQM = 3.30579;
+
+let map, clusterGroup;
+let projects = [];
+let selectedId = null;
+let currentPage = 1;
+
+// ═══════════════════════════════════════
+// 初始化
+// ═══════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  initMap();
+  loadProjects();
+  loadDistricts();
+  checkGeocodeStatus();
+});
+
+function initMap() {
+  map = L.map('map', {
+    center: [24.5, 121.0],
+    zoom: 8,
+    zoomControl: true,
+  });
+  // OpenStreetMap
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap',
+    maxZoom: 19,
+  });
+  // Taiwan EMAP
+  const emap = L.tileLayer(
+    'https://wmts.nlsc.gov.tw/wmts/EMAP/default/GoogleMapsCompatible/{z}/{y}/{x}',
+    { attribution: '© 內政部國土測繪中心', maxZoom: 18 }
+  );
+  osm.addTo(map);
+  L.control.layers({ 'OpenStreetMap': osm, '台灣電子地圖': emap }).addTo(map);
+
+  clusterGroup = L.markerClusterGroup({
+    maxClusterRadius: 60,
+    showCoverageOnHover: false,
+    iconCreateFunction(cluster) {
+      const n = cluster.getChildCount();
+      const sz = n > 100 ? 48 : n > 20 ? 42 : 36;
+      return L.divIcon({
+        html: `<div style="width:${sz}px;height:${sz}px;border-radius:50%;
+          background:linear-gradient(135deg,var(--primary),var(--secondary));
+          color:#fff;display:flex;align-items:center;justify-content:center;
+          font-weight:700;font-size:${sz > 42 ? 14 : 12}px;border:3px solid #fff;
+          box-shadow:0 2px 8px rgba(0,0,0,.3)">${n}</div>`,
+        className: 'price-marker',
+        iconSize: [sz, sz],
+      });
+    },
+  });
+  map.addLayer(clusterGroup);
+  document.getElementById('mapLoading').classList.add('hidden');
+}
+
+// ═══════════════════════════════════════
+// 載入資料
+// ═══════════════════════════════════════
+async function loadProjects(params = '') {
+  try {
+    const url = `${API}/api/projects?limit=200&${params}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.success) {
+      projects = data.projects;
+      document.getElementById('statProjects').textContent = data.total.toLocaleString();
+      document.getElementById('resultsCount').textContent =
+        `顯示 ${projects.length} / ${data.total} 個建案`;
+      renderCards(projects);
+      renderMarkers(projects);
+    }
+  } catch (e) {
+    console.error('載入失敗:', e);
+    document.getElementById('projectsList').innerHTML =
+      '<div class="empty"><div class="empty-icon">❌</div><p>載入失敗，請重試</p></div>';
+  }
+}
+
+async function loadDistricts() {
+  try {
+    const res = await fetch(`${API}/api/districts`);
+    const data = await res.json();
+    if (data.success) {
+      const sel = document.getElementById('districtFilter');
+      data.districts.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d; opt.textContent = d;
+        sel.appendChild(opt);
+      });
+    }
+  } catch (e) {}
+}
+
+async function checkGeocodeStatus() {
+  try {
+    const res = await fetch(`${API}/api/stats`);
+    const data = await res.json();
+    if (data.success) {
+      const pct = data.geocode_total > 0
+        ? Math.round(data.geocoded / data.geocode_total * 100) : 0;
+      document.getElementById('statGeocoded').textContent = `${pct}% 已定位`;
+      const el = document.getElementById('geocodeStatus');
+      if (pct < 100) {
+        el.classList.add('show');
+        el.querySelector('span').textContent =
+          `座標定位中 ${data.geocoded}/${data.geocode_total} (${pct}%)`;
+        setTimeout(checkGeocodeStatus, 30000);
+      } else {
+        el.classList.remove('show');
+      }
+    }
+  } catch (e) {}
+}
+
+// ═══════════════════════════════════════
+// 渲染建案列表
+// ═══════════════════════════════════════
+function renderCards(list) {
+  const container = document.getElementById('projectsList');
+  if (!list.length) {
+    container.innerHTML = '<div class="empty"><div class="empty-icon">😔</div><p>找不到符合條件的建案</p></div>';
+    return;
+  }
+  container.innerHTML = list.map(p => {
+    const priceStr = formatPrice(p.avg_price);
+    const unitPriceStr = p.avg_unit_price_ping ? `${(p.avg_unit_price_ping/10000).toFixed(1)}萬/坪` : '—';
+    const pingStr = p.avg_ping ? p.avg_ping.toFixed(1) : '—';
+    const isPresale = (p.building_type || '').includes('預售') || (p.year_range || '').includes('114') || (p.year_range || '').includes('115');
+    const typeShort = shortenType(p.building_type);
+    const yearDisplay = p.year_range ? `民國${p.year_range}年` : '';
+    return `
+      <div class="card ${selectedId===p.id?'active':''}" onclick="openDetail('${p.id}')" data-id="${p.id}">
+        <div class="card-top">
+          <div class="card-name">${esc(p.name)}</div>
+          <div style="display:flex;gap:4px;flex-shrink:0">
+            <span class="card-badge badge-tx">${p.transaction_count.toLocaleString()} 筆</span>
+            ${isPresale ? '<span class="card-badge badge-presale">🏗 預售</span>' : ''}
+          </div>
+        </div>
+        <div class="card-address">📍 ${esc(p.district)} · ${esc(p.representative_address)}</div>
+        <div class="card-price">${priceStr}</div>
+        <div class="card-stats">
+          <div class="card-stat">📏 <b>${pingStr}</b> 坪</div>
+          <div class="card-stat">💵 <b>${unitPriceStr}</b></div>
+          <div class="card-stat">🏗 <b>${p.max_floors || '—'}</b>F</div>
+          <div class="card-stat">📅 <b>${yearDisplay}</b></div>
+        </div>
+        <span class="card-type">${typeShort}</span>
+      </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════
+// 地圖標記
+// ═══════════════════════════════════════
+function renderMarkers(list) {
+  clusterGroup.clearLayers();
+  const bounds = L.latLngBounds();
+  let hasValid = false;
+
+  list.forEach(p => {
+    if (!p.lat || !p.lng) return;
+    if (p.lat < 21 || p.lat > 26.5 || p.lng < 118 || p.lng > 123) return;
+
+    const color = getPriceColor(p.avg_price);
+    const label = formatPriceShort(p.avg_price);
+    const icon = L.divIcon({
+      html: `<div class="marker-dot" style="background:${color}">${label}</div>`,
+      className: 'price-marker',
+      iconSize: [32, 32],
+      iconAnchor: [16, 16],
+    });
+
+    const marker = L.marker([p.lat, p.lng], { icon });
+    marker.bindPopup(`
+      <div style="min-width:220px;font-family:var(--font)">
+        <div style="font-weight:700;font-size:15px;margin-bottom:6px">${esc(p.name)}</div>
+        <div style="font-size:12px;color:#666;margin-bottom:8px">📍 ${esc(p.representative_address)}</div>
+        <div style="font-size:18px;font-weight:800;color:var(--danger);margin-bottom:8px">${formatPrice(p.avg_price)}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px">
+          <span>📏 ${p.avg_ping?.toFixed(1) || '—'} 坪</span>
+          <span>📊 ${p.transaction_count} 筆</span>
+          <span>🏗 ${p.max_floors || '—'}F</span>
+          <span>📅 ${p.year_range || '—'}</span>
+        </div>
+        <div style="margin-top:8px;text-align:center">
+          <button onclick="openDetail('${p.id}')" style="background:var(--primary);color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">查看詳情</button>
+        </div>
+      </div>
+    `, { maxWidth: 280 });
+
+    clusterGroup.addLayer(marker);
+    bounds.extend([p.lat, p.lng]);
+    hasValid = true;
+  });
+
+  if (hasValid) {
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
+  }
+}
+
+// ═══════════════════════════════════════
+// 建案詳情
+// ═══════════════════════════════════════
+async function openDetail(projectId) {
+  selectedId = projectId;
+  // 更新卡片選中態
+  document.querySelectorAll('.card').forEach(c =>
+    c.classList.toggle('active', c.dataset.id === projectId)
+  );
+
+  const modal = document.getElementById('modalBg');
+  modal.classList.add('show');
+  document.getElementById('modalTitle').textContent = '載入中…';
+  document.getElementById('modalSub').textContent = '';
+  document.getElementById('modalStats').innerHTML = '';
+  document.getElementById('modalBody').innerHTML =
+    '<div class="empty"><div class="spinner"></div><p style="margin-top:12px">載入交易紀錄…</p></div>';
+
+  try {
+    const res = await fetch(`${API}/api/project/${projectId}`);
+    const data = await res.json();
+    if (!data.success) {
+      document.getElementById('modalBody').innerHTML =
+        `<div class="empty"><div class="empty-icon">❌</div><p>${data.error}</p></div>`;
+      return;
+    }
+    renderDetail(data);
+  } catch (e) {
+    document.getElementById('modalBody').innerHTML =
+      `<div class="empty"><div class="empty-icon">❌</div><p>載入失敗</p></div>`;
+  }
+}
+
+function renderDetail(data) {
+  const { project: proj, summary: s, transactions: txs } = data;
+
+  // 標題
+  document.getElementById('modalTitle').textContent = proj.name;
+  document.getElementById('modalSub').textContent =
+    `${proj.district} · ${proj.representative_address} · ${proj.building_type}`;
+
+  // 統計卡片
+  document.getElementById('modalStats').innerHTML = `
+    <div class="stat-card"><div class="label">交易筆數</div><div class="value">${s.total_transactions}</div></div>
+    <div class="stat-card"><div class="label">平均總價</div><div class="value danger">${formatPrice(s.avg_price)}</div></div>
+    <div class="stat-card"><div class="label">平均單價</div><div class="value">${s.avg_unit_price ? (s.avg_unit_price/10000).toFixed(1)+'萬/坪' : '—'}</div></div>
+    <div class="stat-card"><div class="label">平均坪數</div><div class="value">${s.avg_area?.toFixed(1) || '—'} 坪</div></div>
+    <div class="stat-card"><div class="label">⚠️ 特殊交易</div><div class="value warning">${s.special_count}</div></div>
+  `;
+
+  // 交易表格
+  if (!txs.length) {
+    document.getElementById('modalBody').innerHTML =
+      '<div class="empty"><div class="empty-icon">📭</div><p>暫無交易紀錄</p></div>';
+    return;
+  }
+
+  let html = `
+    <div class="section-title">📋 交易紀錄明細（${txs.length} 筆）</div>
+    <div class="table-wrap">
+    <table>
+    <thead><tr>
+      <th>日期</th>
+      <th>地址</th>
+      <th>樓層</th>
+      <th>格局</th>
+      <th>坪數</th>
+      <th>總價</th>
+      <th>單價(萬/坪)</th>
+      <th>公設比</th>
+      <th>特殊交易</th>
+      <th>備註</th>
+    </tr></thead>
+    <tbody>`;
+
+  txs.forEach(tx => {
+    const hasSpecial = tx.special && tx.special.length > 0;
+    const rowClass = hasSpecial ? 'special-row' : '';
+    const layout = (tx.rooms && tx.rooms !== '0' && tx.rooms !== 'nan')
+      ? `${tx.rooms}房${tx.halls}廳${tx.baths}衛` : '—';
+    const floorStr = tx.floor ? `${tx.floor}/${tx.total_floors}F` : '—';
+    const unitPriceWan = tx.unit_price_ping ? (tx.unit_price_ping / 10000).toFixed(1) : '—';
+    const ratioStr = tx.ratio !== null && tx.ratio !== undefined ? tx.ratio + '%' : '—';
+
+    let specialHtml = '';
+    if (hasSpecial) {
+      specialHtml = '<div class="special-tags">' +
+        tx.special.map(s =>
+          `<span class="special-tag" style="background:${s.color}20;color:${s.color}">${s.icon} ${s.label}</span>`
+        ).join('') + '</div>';
+    }
+
+    const noteShort = tx.note && tx.note.length > 30
+      ? tx.note.substring(0, 30) + '…' : (tx.note || '—');
+
+    html += `<tr class="${rowClass}">
+      <td>${tx.date || '—'}</td>
+      <td style="max-width:180px;font-size:11px">${esc(tx.address)}</td>
+      <td class="floor-cell">${floorStr}</td>
+      <td>${layout}</td>
+      <td>${tx.area_ping?.toFixed(1) || '—'}</td>
+      <td class="price-cell">${formatPrice(tx.price)}</td>
+      <td>${unitPriceWan}</td>
+      <td>${ratioStr}</td>
+      <td>${specialHtml || '<span style="color:#ccc">—</span>'}</td>
+      <td class="note-cell" title="${esc(tx.note)}">${esc(noteShort)}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table></div>';
+  document.getElementById('modalBody').innerHTML = html;
+}
+
+function closeModal() {
+  document.getElementById('modalBg').classList.remove('show');
+}
+
+// ═══════════════════════════════════════
+// 搜尋 & 篩選
+// ═══════════════════════════════════════
+function doSearch() {
+  const kw = document.getElementById('searchInput').value.trim();
+  loadProjects(kw ? `keyword=${encodeURIComponent(kw)}` : '');
+}
+
+function applyFilters() {
+  const parts = [];
+  const kw = document.getElementById('searchInput').value.trim();
+  if (kw) parts.push(`keyword=${encodeURIComponent(kw)}`);
+
+  const sortBy = document.getElementById('sortBy').value;
+  const sortOrder = document.getElementById('sortOrder').value;
+  parts.push(`sort_by=${sortBy}&sort_order=${sortOrder}`);
+
+  const minP = document.getElementById('minPrice').value;
+  const maxP = document.getElementById('maxPrice').value;
+  if (minP) parts.push(`min_price=${parseFloat(minP) * 10000}`);
+  if (maxP) parts.push(`max_price=${parseFloat(maxP) * 10000}`);
+
+  const minPing = document.getElementById('minPing').value;
+  const maxPing = document.getElementById('maxPing').value;
+  if (minPing) parts.push(`min_ping=${minPing}`);
+  if (maxPing) parts.push(`max_ping=${maxPing}`);
+
+  const district = document.getElementById('districtFilter').value;
+  if (district) parts.push(`district=${encodeURIComponent(district)}`);
+
+  const btype = document.getElementById('typeFilter').value;
+  if (btype) parts.push(`building_type=${encodeURIComponent(btype)}`);
+
+  loadProjects(parts.join('&'));
+  switchTab('list', document.querySelector('.sidebar-tab'));
+}
+
+function resetFilters() {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('minPrice').value = '';
+  document.getElementById('maxPrice').value = '';
+  document.getElementById('minPing').value = '';
+  document.getElementById('maxPing').value = '';
+  document.getElementById('districtFilter').value = '';
+  document.getElementById('typeFilter').value = '';
+  document.getElementById('sortBy').value = 'transaction_count';
+  document.getElementById('sortOrder').value = 'desc';
+  loadProjects();
+}
+
+// ═══════════════════════════════════════
+// UI 切換
+// ═══════════════════════════════════════
+function switchTab(tab, el) {
+  document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('filterPanel').classList.toggle('show', tab === 'filter');
+}
+
+// ═══════════════════════════════════════
+// 工具函數
+// ═══════════════════════════════════════
+function getPriceColor(price) {
+  if (price < 8000000) return '#16a34a';
+  if (price < 15000000) return '#2563eb';
+  if (price < 30000000) return '#d97706';
+  return '#dc2626';
+}
+
+function formatPrice(price) {
+  const n = parseFloat(price) || 0;
+  if (n >= 1e8) return (n / 1e8).toFixed(2) + ' 億';
+  if (n >= 1e4) return (n / 1e4).toFixed(0) + ' 萬';
+  return n.toLocaleString() + ' 元';
+}
+
+function formatPriceShort(price) {
+  const n = parseFloat(price) || 0;
+  if (n >= 1e8) return (n / 1e8).toFixed(1) + '億';
+  if (n >= 1e4) return (n / 1e4).toFixed(0) + '萬';
+  return n.toFixed(0);
+}
+
+function shortenType(type) {
+  if (!type) return '—';
+  return type.replace(/\(.*?\)/g, '').replace(/;.*$/, '').trim().substring(0, 10);
+}
+
+function esc(str) {
+  if (!str) return '';
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>

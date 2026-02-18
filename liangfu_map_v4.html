@@ -531,19 +531,65 @@
         function selectProject(projectName, projectAddr, projectId) {
             selectedProjectId = projectId;
             displayProjects(projects);
-            showProjectDetail(projectId, projectAddr);
+            showProjectDetail(projectId, projectAddr, projectName);
         }
 
-        async function showProjectDetail(projectId, address) {
+        async function showProjectDetail(projectId, address, projectName) {
             document.getElementById('modalTitle').textContent = '載入中...';
             document.getElementById('salesModal').classList.add('active');
+            
+            // 如果沒有建案名稱，先用 address2community API 查詢
+            let finalProjectName = projectName;
+            if (!projectName || projectName === '未知') {
+                try {
+                    const a2cResponse = await fetch(`${API_BASE}/api/address2community?address=${encodeURIComponent(address)}`);
+                    const a2cResult = await a2cResponse.json();
+                    if (a2cResult.success && a2cResult.best) {
+                        finalProjectName = a2cResult.best;
+                        document.getElementById('modalTitle').textContent = `🏘️ ${finalProjectName}`;
+                    }
+                } catch (error) {
+                    console.log('address2community 查詢失敗:', error);
+                }
+            }
+            
             try {
-                const response = await fetch(`${API_BASE}/api/project/${projectId}?address=${encodeURIComponent(address)}`);
-                const result = await response.json();
-                if (result.success && result.project) {
-                    renderProjectDetail(result.project);
+                // 嘗試1: 用建案名稱搜尋
+                let searchResult = null;
+                if (finalProjectName && finalProjectName !== '未知') {
+                    const response1 = await fetch(`${API_BASE}/api/projects?keyword=${encodeURIComponent(finalProjectName)}&limit=1`);
+                    const result1 = await response1.json();
+                    if (result1.success && result1.projects && result1.projects.length > 0) {
+                        searchResult = result1.projects[0];
+                    }
+                }
+                
+                // 嘗試2: 用地址搜尋（備用方案）
+                if (!searchResult) {
+                    const response2 = await fetch(`${API_BASE}/api/projects?keyword=${encodeURIComponent(address)}&limit=1`);
+                    const result2 = await response2.json();
+                    if (result2.success && result2.projects && result2.projects.length > 0) {
+                        searchResult = result2.projects[0];
+                    }
+                }
+                
+                if (searchResult) {
+                    // 取得該建案的詳細交易資料
+                    const detailResponse = await fetch(`${API_BASE}/api/project/${searchResult.id}?address=${encodeURIComponent(address)}`);
+                    const detailResult = await detailResponse.json();
+                    if (detailResult.success && detailResult.transactions && detailResult.transactions.length > 0) {
+                        // 將 transactions 添加到 project 物件中以供 renderProjectDetail 使用
+                        const projectWithTx = {
+                            ...detailResult.project,
+                            transactions: detailResult.transactions,
+                            sales_control: detailResult.summary
+                        };
+                        renderProjectDetail(projectWithTx, finalProjectName || searchResult.name);
+                    } else {
+                        document.getElementById('modalBody').innerHTML = `<p style="text-align:center;padding:30px;">📭 此地址暫無交易紀錄<br><small style="color:#999;">地址: ${address}<br>建案: ${finalProjectName || '未知'}</small></p>`;
+                    }
                 } else {
-                    document.getElementById('modalBody').innerHTML = `<p style="text-align:center;padding:30px;">載入失敗：${result.error || '未知錯誤'}</p>`;
+                    document.getElementById('modalBody').innerHTML = `<p style="text-align:center;padding:30px;">📭 此地址暫無交易紀錄<br><small style="color:#999;">地址: ${address}<br>建案: ${finalProjectName || '未知'}</small></p>`;
                 }
             } catch (error) {
                 console.error('載入詳情失敗:', error);
@@ -551,25 +597,29 @@
             }
         }
 
-        function renderProjectDetail(project) {
+        function renderProjectDetail(project, customTitle) {
             if (!project?.transactions || project.transactions.length === 0) {
-                document.getElementById('modalBody').innerHTML = '<p>無交易紀錄</p>';
+                document.getElementById('modalBody').innerHTML = '<p>📭 暫無交易紀錄</p>';
                 return;
             }
 
             const transactions = project.transactions;
             const salesControl = project.sales_control || {};
-            document.getElementById('modalTitle').textContent = transactions[0]?.['土地位置建物門牌'] || '建案詳情';
+            
+            // 取得第一筆交易的地址（支援新舊格式）
+            const firstAddr = transactions[0]?.address || transactions[0]?.['土地位置建物門牌'] || '建案詳情';
+            document.getElementById('modalTitle').textContent = customTitle || firstAddr;
 
-            const avgPrice = transactions.reduce((s, t) => s + (parseFloat(t['總價元']) || 0), 0) / transactions.length;
-            const avgUnitPrice = transactions.reduce((s, t) => s + (parseFloat(t['單價元平方公尺']) || 0), 0) / transactions.length;
-            const avgArea = transactions.reduce((s, t) => s + (parseFloat(t['建物移轉總面積平方公尺']) || 0), 0) / transactions.length;
+            // 計算平均值（支援新舊格式）
+            const avgPrice = transactions.reduce((s, t) => s + (parseFloat(t.price || t['總價元']) || 0), 0) / transactions.length;
+            const avgUnitPrice = transactions.reduce((s, t) => s + (parseFloat(t.unit_price_sqm || t['單價元平方公尺']) || 0), 0) / transactions.length;
+            const avgArea = transactions.reduce((s, t) => s + (parseFloat(t.area_sqm || t['建物移轉總面積平方公尺']) || 0), 0) / transactions.length;
             const avgPing = avgArea / PING_TO_SQM;
             const avgUPPing = avgUnitPrice * PING_TO_SQM;
 
             let html = `
                 <div class="project-detail-header">
-                    <div class="detail-stat-card"><div class="detail-stat-label">總交易數</div><div class="detail-stat-value">${salesControl.total_units || transactions.length}</div></div>
+                    <div class="detail-stat-card"><div class="detail-stat-label">總交易數</div><div class="detail-stat-value">${salesControl.total_transactions || salesControl.total_units || transactions.length}</div></div>
                     <div class="detail-stat-card"><div class="detail-stat-label">平均總價</div><div class="detail-stat-value">${formatPriceShort(avgPrice)}</div></div>
                     <div class="detail-stat-card"><div class="detail-stat-label">平均單價</div><div class="detail-stat-value">${convertUnitPrice(avgUPPing)}<br><span style="font-size:12px;">${getUnitPriceText()}</span></div></div>
                     <div class="detail-stat-card"><div class="detail-stat-label">平均面積</div><div class="detail-stat-value">${avgPing.toFixed(2)}<br><span style="font-size:12px;">坪</span></div></div>
@@ -577,27 +627,34 @@
                 <div><div class="section-title">📋 交易紀錄</div><div class="sales-grid">`;
 
             transactions.forEach(trans => {
-                const price = parseFloat(trans['總價元']) || 0;
-                const floor = trans['移轉層次'] || '?';
-                html += `<div class="unit-cell sold" title="${trans['交易年月日'] || ''}"><div class="unit-number">${floor}</div><div class="unit-price">${formatPriceShort(price)}</div></div>`;
+                const price = parseFloat(trans.price || trans['總價元']) || 0;
+                const floor = trans.floor || trans['移轉層次'] || '?';
+                const date = trans.date || trans['交易年月日'] || '';
+                html += `<div class="unit-cell sold" title="${date}"><div class="unit-number">${floor}</div><div class="unit-price">${formatPriceShort(price)}</div></div>`;
             });
 
             html += `</div></div><div style="margin-top:20px;"><div class="section-title">📊 詳細紀錄</div>
                 <table class="transactions-table"><thead><tr><th>日期</th><th>樓層</th><th>房/廳/衛</th><th>面積</th><th>總價</th><th>單價</th></tr></thead><tbody>`;
 
             transactions.slice(0, 20).forEach(trans => {
-                const area = parseFloat(trans['建物移轉總面積平方公尺']) || 0;
-                const unitPrice = parseFloat(trans['單價元平方公尺']) || 0;
+                const area = parseFloat(trans.area_sqm || trans['建物移轉總面積平方公尺']) || 0;
+                const unitPrice = parseFloat(trans.unit_price_sqm || trans['單價元平方公尺']) || 0;
                 const ping = area / PING_TO_SQM;
                 const upPing = unitPrice * PING_TO_SQM;
-                const floor = trans['移轉層次'] || '-';
-                const totalFloor = trans['總樓層數'] || '-';
+                const floor = trans.floor || trans['移轉層次'] || '-';
+                const totalFloor = trans.total_floor || trans['總樓層數'] || '-';
+                const price = trans.price || trans['總價元'];
+                const date = trans.date || trans['交易年月日'] || '-';
+                const rooms = trans.rooms || trans['建物現況格局-房'] || '0';
+                const halls = trans.halls || trans['建物現況格局-廳'] || '0';
+                const baths = trans.baths || trans['建物現況格局-衛'] || '0';
+                
                 html += `<tr>
-                    <td>${trans['交易年月日'] || '-'}</td>
+                    <td>${date}</td>
                     <td>${floor}/${totalFloor}</td>
-                    <td>${trans['建物現況格局-房'] || '0'}房${trans['建物現況格局-廳'] || '0'}廳${trans['建物現況格局-衛'] || '0'}衛</td>
+                    <td>${rooms}房${halls}廳${baths}衛</td>
                     <td>${ping.toFixed(1)} 坪</td>
-                    <td style="color:#e74c3c;font-weight:600;">${formatPrice(trans['總價元'])}</td>
+                    <td style="color:#e74c3c;font-weight:600;">${formatPrice(price)}</td>
                     <td>${convertUnitPrice(upPing)} ${getUnitPriceText()}</td>
                 </tr>`;
             });
