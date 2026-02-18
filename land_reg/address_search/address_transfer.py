@@ -48,7 +48,7 @@ from itertools import product
 
 # ── 路徑設定 ──────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DB = os.path.join(SCRIPT_DIR, '..', 'land_a.db')
+DEFAULT_DB = os.path.join(SCRIPT_DIR, '..', '..', 'db', 'land_a.db')
 
 # ── 數字對照表 ─────────────────────────────────────────────────────────────────
 FULLWIDTH_DIGITS = '０１２３４５６７８９'

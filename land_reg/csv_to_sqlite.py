@@ -9,7 +9,7 @@ csv_to_sqlite.py
 
 預設：
     CSV: ../ALL_lvr_land_a.csv  (相對於此腳本所在目錄)
-    DB : ./land_a.db
+    DB : ../db/land_a.db
 """
 
 import csv
@@ -21,7 +21,7 @@ import time
 # ── 路徑設定 ──────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CSV = os.path.join(SCRIPT_DIR, '..', 'ALL_lvr_land_a.csv')
-DEFAULT_DB  = os.path.join(SCRIPT_DIR, 'land_a.db')
+DEFAULT_DB  = os.path.join(SCRIPT_DIR, '..', 'db', 'land_a.db')
 
 CSV_PATH = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CSV
 DB_PATH  = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_DB

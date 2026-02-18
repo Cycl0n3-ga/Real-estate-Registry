@@ -1039,7 +1039,7 @@ class OSMIndexProvider:
         if db_path is None:
             db_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
-                'cache', 'osm_addresses.db'
+                '..', '..', 'db', 'osm_addresses.db'
             )
         self.db_path = db_path
         self._available = os.path.exists(db_path)
@@ -1254,7 +1254,7 @@ class TaiwanGeocoder:
             osm_index_db: OSM 門牌索引資料庫路徑（build_osm_index.py 建立）
         """
         if cache_dir is None:
-            cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cache')
+            cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'db')
         os.makedirs(cache_dir, exist_ok=True)
 
         self.cache = GeoCache(os.path.join(cache_dir, 'geocode_cache.db'))
