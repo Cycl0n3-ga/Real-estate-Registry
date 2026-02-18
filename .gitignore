@@ -37,5 +37,4 @@ geocode_cache.json
 .env
 .env.local
 .env.production
-app.py.bak
 app.log
