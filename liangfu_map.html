@@ -181,9 +181,10 @@
         .unit-number { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
         .unit-price { font-size: 10px; color: #666; }
         .transactions-table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 12px; }
-        .transactions-table th { background: #f5f5f5; padding: 10px; text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; }
+        .transactions-table th { background: #f5f5f5; padding: 10px; text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; white-space: nowrap; }
         .transactions-table td { padding: 10px; border-bottom: 1px solid #eee; }
         .transactions-table tr:hover { background: #f9f9f9; }
+        .table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
         .loading-overlay {
             position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -275,7 +276,7 @@
                     <div class="filter-group">
                         <div class="filter-label">成交年份（西元）</div>
                         <div class="filter-row">
-                            <input type="number" id="minYear" class="filter-input" placeholder="最早" value="2020">
+                            <input type="number" id="minYear" class="filter-input" placeholder="最早" value="2010">
                             <input type="number" id="maxYear" class="filter-input" placeholder="最晚" value="2026">
                         </div>
                     </div>
@@ -328,7 +329,7 @@
             <div class="map-controls">
                 <button class="map-control-btn" onclick="map.zoomIn()" title="放大">+</button>
                 <button class="map-control-btn" onclick="map.zoomOut()" title="縮小">−</button>
-                <button class="map-control-btn" onclick="locateUser()" title="定位到我">📍</button>
+                <button class="map-control-btn" onclick="locateUser(this)" title="定位到我">📍</button>
             </div>
         </div>
     </div>
@@ -423,6 +424,7 @@
         function getUnitPriceText() { return currentUnit === 'ping' ? '元/坪' : '元/㎡'; }
 
         // ===================== 載入資料 =====================
+        let loadRetryCount = 0;
         async function loadAllProjects() {
             showLoading();
             try {
@@ -430,6 +432,20 @@
                 const result = await response.json();
                 if (result.success) {
                     projects = result.projects || [];
+                    if (projects.length === 0 && loadRetryCount < 10) {
+                        // 資料可能還在載入，顯示提示並自動重試
+                        loadRetryCount++;
+                        document.getElementById('projectsList').innerHTML = `
+                            <div style="text-align:center;padding:30px 15px;color:#666;">
+                                <div class="loading-spinner" style="margin:0 auto 15px;"></div>
+                                <p style="font-size:13px;">⏳ 資料載入中... (${loadRetryCount}/10)</p>
+                                <p style="font-size:11px;color:#999;margin-top:8px;">建案資料量較大，請稍候</p>
+                            </div>`;
+                        hideLoading();
+                        setTimeout(loadAllProjects, 5000);
+                        return;
+                    }
+                    loadRetryCount = 0;
                     displayProjects(projects);
                     addMarkersToMap(projects);
                 } else {
@@ -466,15 +482,20 @@
                 const safeName = (projectName).replace(/'/g, "\\'").replace(/"/g, '\\"');
                 const safeAddr = (projectAddress).replace(/'/g, "\\'").replace(/"/g, '\\"');
 
+                const isAddrResult = project.is_address_result || (projectId || '').startsWith('addr_');
+                const cardBadge = isAddrResult
+                    ? `<span class="project-badge" style="background:#27ae60;">📍 ${transCount} 筆</span>`
+                    : `<span class="project-badge">${transCount} 筆</span>`;
+
                 return `
                     <div class="project-card ${selectedProjectId === projectId ? 'active' : ''}"
                          onclick="selectProject('${safeName}', '${safeAddr}', '${projectId}')">
                         <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:6px;">
                             <div style="flex:1; min-width:0;">
-                                <div class="project-name">${projectName}</div>
-                                <div class="project-address">📍 ${projectAddress}</div>
+                                <div class="project-name">${isAddrResult ? '📍 ' : ''}${projectName}</div>
+                                <div class="project-address">${isAddrResult ? '' : '🏢 '}${projectAddress}</div>
                             </div>
-                            <span class="project-badge">${transCount} 筆</span>
+                            ${cardBadge}
                         </div>
                         <div class="project-price">${formatPrice(avgPrice)}</div>
                         <div class="project-stats">
@@ -534,78 +555,167 @@
         function selectProject(projectName, projectAddr, projectId) {
             selectedProjectId = projectId;
             displayProjects(projects);
-            showProjectDetail(projectId, projectAddr);
+            showProjectDetail(projectId, projectAddr, projectName);
         }
 
-        async function showProjectDetail(projectId, address) {
+        async function showProjectDetail(projectId, address, projectName) {
             document.getElementById('modalTitle').textContent = '載入中...';
+            document.getElementById('modalBody').innerHTML = '<div style="text-align:center;padding:40px;"><div class="loading-spinner"></div><p style="margin-top:15px;color:#666;">正在查詢交易紀錄...</p></div>';
             document.getElementById('salesModal').classList.add('active');
+
+            let finalName = projectName || '';
+
             try {
-                const response = await fetch(`${API_BASE}/api/project/${projectId}?address=${encodeURIComponent(address)}`);
-                const result = await response.json();
-                if (result.success && result.project) {
-                    renderProjectDetail(result.project);
+                // 用 address2community 嘗試取得社區名
+                if (!finalName || finalName === '未知' || finalName.length > 15) {
+                    try {
+                        const a2cResp = await fetch(`${API_BASE}/api/address2community?address=${encodeURIComponent(address)}`);
+                        const a2c = await a2cResp.json();
+                        if (a2c.success && a2c.best) {
+                            finalName = a2c.best;
+                        }
+                    } catch (e) { console.log('a2c lookup failed:', e); }
+                }
+
+                // 直接調用 /api/project/<id> 取得交易紀錄
+                const url = `${API_BASE}/api/project/${projectId}?address=${encodeURIComponent(address)}&name=${encodeURIComponent(finalName)}`;
+                const resp = await fetch(url);
+                const data = await resp.json();
+
+                if (data.success && data.transactions && data.transactions.length > 0) {
+                    const projectWithTx = {
+                        ...(data.project || {}),
+                        transactions: data.transactions,
+                        sales_control: data.summary || {},
+                        note: data.note || '',
+                    };
+                    renderProjectDetail(projectWithTx, finalName || data.project?.name || '建案詳情');
+                } else if (data.success && data.summary && data.summary.total_transactions > 0) {
+                    // B表建案有統計摘要但沒有明細交易
+                    const s = data.summary;
+                    const proj = data.project || {};
+                    document.getElementById('modalTitle').textContent = finalName || proj.name || '建案詳情';
+                    document.getElementById('modalBody').innerHTML = `
+                        <div class="project-detail-header">
+                            <div class="detail-stat-card"><div class="detail-stat-label">總交易數</div><div class="detail-stat-value">${s.total_transactions || 0}</div></div>
+                            <div class="detail-stat-card"><div class="detail-stat-label">平均總價</div><div class="detail-stat-value">${formatPriceShort(s.avg_price || 0)}</div></div>
+                            <div class="detail-stat-card"><div class="detail-stat-label">平均單價/坪</div><div class="detail-stat-value">${formatPriceShort(s.avg_unit_price_ping || 0)}</div></div>
+                            <div class="detail-stat-card"><div class="detail-stat-label">平均面積</div><div class="detail-stat-value">${(s.avg_area_ping || 0).toFixed(1)}<br><span style="font-size:12px;">坪</span></div></div>
+                        </div>
+                        <div style="text-align:center;padding:20px;color:#999;">
+                            <p>📊 此建案共有 ${s.total_transactions} 筆交易紀錄</p>
+                            ${s.year_range ? `<p style="font-size:12px;">交易年份: ${s.year_range}</p>` : ''}
+                            ${s.building_type ? `<p style="font-size:12px;">建物型態: ${s.building_type}</p>` : ''}
+                            <p style="font-size:11px;color:#bbb;margin-top:10px;">地址: ${proj.address || address}</p>
+                        </div>`;
                 } else {
-                    document.getElementById('modalBody').innerHTML = `<p style="text-align:center;padding:30px;">載入失敗：${result.error || '未知錯誤'}</p>`;
+                    document.getElementById('modalTitle').textContent = finalName || '查詢結果';
+                    document.getElementById('modalBody').innerHTML = `<p style="text-align:center;padding:30px;">📭 此建案暫無交易紀錄<br><small style="color:#999;">地址: ${address}<br>建案: ${finalName || '未知'}<br>共找到 ${data.count || 0} 筆</small></p>`;
                 }
             } catch (error) {
                 console.error('載入詳情失敗:', error);
+                document.getElementById('modalTitle').textContent = '錯誤';
                 document.getElementById('modalBody').innerHTML = '<p style="text-align:center;padding:30px;">❌ 無法載入詳情</p>';
             }
         }
 
-        function renderProjectDetail(project) {
+        function renderProjectDetail(project, customTitle) {
             if (!project?.transactions || project.transactions.length === 0) {
-                document.getElementById('modalBody').innerHTML = '<p>無交易紀錄</p>';
+                document.getElementById('modalBody').innerHTML = '<p>📭 暫無交易紀錄</p>';
                 return;
             }
 
             const transactions = project.transactions;
             const salesControl = project.sales_control || {};
-            document.getElementById('modalTitle').textContent = transactions[0]?.['土地位置建物門牌'] || '建案詳情';
+            
+            // 取得第一筆交易的地址（支援新舊格式）
+            const firstAddr = transactions[0]?.address || transactions[0]?.['土地位置建物門牌'] || '建案詳情';
+            document.getElementById('modalTitle').textContent = customTitle || firstAddr;
 
-            const avgPrice = transactions.reduce((s, t) => s + (parseFloat(t['總價元']) || 0), 0) / transactions.length;
-            const avgUnitPrice = transactions.reduce((s, t) => s + (parseFloat(t['單價元平方公尺']) || 0), 0) / transactions.length;
-            const avgArea = transactions.reduce((s, t) => s + (parseFloat(t['建物移轉總面積平方公尺']) || 0), 0) / transactions.length;
+            // 計算平均值（支援新舊格式）
+            const avgPrice = transactions.reduce((s, t) => s + (parseFloat(t.price || t['總價元']) || 0), 0) / transactions.length;
+            const avgUnitPrice = transactions.reduce((s, t) => s + (parseFloat(t.unit_price_sqm || t['單價元平方公尺']) || 0), 0) / transactions.length;
+            const avgArea = transactions.reduce((s, t) => s + (parseFloat(t.area_sqm || t['建物移轉總面積平方公尺']) || 0), 0) / transactions.length;
             const avgPing = avgArea / PING_TO_SQM;
             const avgUPPing = avgUnitPrice * PING_TO_SQM;
 
+            // 優先使用 B 表 summary（如果有）
+            const hasBSummary = salesControl.total_transactions && salesControl.avg_price;
+            const displayAvgPrice = hasBSummary ? salesControl.avg_price : avgPrice;
+            const displayAvgPing = hasBSummary ? (salesControl.avg_area_ping || avgPing) : avgPing;
+            const displayAvgUPPing = hasBSummary ? (salesControl.avg_unit_price_ping || avgUPPing) : avgUPPing;
+            const displayTotalTx = salesControl.total_transactions || salesControl.total_units || transactions.length;
+
+            const noteHtml = project.note ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#856404;">ℹ️ ${project.note}</div>` : '';
+
             let html = `
+                ${noteHtml}
                 <div class="project-detail-header">
-                    <div class="detail-stat-card"><div class="detail-stat-label">總交易數</div><div class="detail-stat-value">${salesControl.total_units || transactions.length}</div></div>
-                    <div class="detail-stat-card"><div class="detail-stat-label">平均總價</div><div class="detail-stat-value">${formatPriceShort(avgPrice)}</div></div>
-                    <div class="detail-stat-card"><div class="detail-stat-label">平均單價</div><div class="detail-stat-value">${convertUnitPrice(avgUPPing)}<br><span style="font-size:12px;">${getUnitPriceText()}</span></div></div>
-                    <div class="detail-stat-card"><div class="detail-stat-label">平均面積</div><div class="detail-stat-value">${avgPing.toFixed(2)}<br><span style="font-size:12px;">坪</span></div></div>
+                    <div class="detail-stat-card"><div class="detail-stat-label">總交易數</div><div class="detail-stat-value">${displayTotalTx}</div></div>
+                    <div class="detail-stat-card"><div class="detail-stat-label">平均總價</div><div class="detail-stat-value">${formatPriceShort(displayAvgPrice)}</div></div>
+                    <div class="detail-stat-card"><div class="detail-stat-label">平均單價</div><div class="detail-stat-value">${convertUnitPrice(displayAvgUPPing)}<br><span style="font-size:12px;">${getUnitPriceText()}</span></div></div>
+                    <div class="detail-stat-card"><div class="detail-stat-label">平均面積</div><div class="detail-stat-value">${displayAvgPing.toFixed(1)}<br><span style="font-size:12px;">坪</span></div></div>
                 </div>
-                <div><div class="section-title">📋 交易紀錄</div><div class="sales-grid">`;
+                <div><div class="section-title">📋 交易紀錄 (${transactions.length} 筆)</div><div class="sales-grid">`;
 
             transactions.forEach(trans => {
-                const price = parseFloat(trans['總價元']) || 0;
-                const floor = trans['移轉層次'] || '?';
-                html += `<div class="unit-cell sold" title="${trans['交易年月日'] || ''}"><div class="unit-number">${floor}</div><div class="unit-price">${formatPriceShort(price)}</div></div>`;
+                const price = parseFloat(trans.price || trans['總價元']) || 0;
+                const floor = trans.floor || trans['移轉層次'] || '?';
+                const date = trans.date || trans['交易年月日'] || '';
+                html += `<div class="unit-cell sold" title="${date}"><div class="unit-number">${floor}</div><div class="unit-price">${formatPriceShort(price)}</div></div>`;
             });
 
-            html += `</div></div><div style="margin-top:20px;"><div class="section-title">📊 詳細紀錄</div>
-                <table class="transactions-table"><thead><tr><th>日期</th><th>樓層</th><th>房/廳/衛</th><th>面積</th><th>總價</th><th>單價</th></tr></thead><tbody>`;
+            html += `</div></div><div style="margin-top:20px;"><div class="section-title">📊 詳細紀錄 (${transactions.length} 筆)</div>
+                <div class="table-wrapper">
+                <table class="transactions-table"><thead><tr><th>日期</th><th>地址</th><th>樓層</th><th>房/廳/衛</th><th>面積</th><th>總價</th><th>單價</th><th>車位</th><th>備忘錄</th></tr></thead><tbody>`;
 
-            transactions.slice(0, 20).forEach(trans => {
-                const area = parseFloat(trans['建物移轉總面積平方公尺']) || 0;
-                const unitPrice = parseFloat(trans['單價元平方公尺']) || 0;
+            transactions.slice(0, 100).forEach(trans => {
+                const area = parseFloat(trans.area_sqm || trans['建物移轉總面積平方公尺']) || 0;
+                const unitPrice = parseFloat(trans.unit_price_sqm || trans['單價元平方公尺']) || 0;
                 const ping = area / PING_TO_SQM;
                 const upPing = unitPrice * PING_TO_SQM;
-                const floor = trans['移轉層次'] || '-';
-                const totalFloor = trans['總樓層數'] || '-';
-                html += `<tr>
-                    <td>${trans['交易年月日'] || '-'}</td>
+                const floor = trans.floor || trans['移轉層次'] || '-';
+                const totalFloor = trans.total_floor || trans['總樓層數'] || '-';
+                const price = trans.price || trans['總價元'];
+                const date = trans.date || trans['交易年月日'] || '-';
+                const rooms = trans.rooms || trans['建物現況格局-房'] || '0';
+                const halls = trans.halls || trans['建物現況格局-廳'] || '0';
+                const baths = trans.baths || trans['建物現況格局-衛'] || '0';
+                const addr = trans.address || trans['土地位置建物門牌'] || '-';
+                const shortAddr = addr.replace(/^[\u4e00-\u9fff]{2,3}[市縣][\u4e00-\u9fff]{1,3}[區鎮鄉市]/, '');
+                // 車位資訊
+                const parkType = trans.parking_type || '';
+                const parkPrice = parseFloat(trans.parking_price) || 0;
+                let parkCell = '-';
+                if (parkType && parkType !== '無') {
+                    parkCell = parkPrice > 0
+                        ? `<span style="color:#e67e22;font-size:10px;">${parkType}<br>${formatPriceShort(parkPrice)}</span>`
+                        : `<span style="font-size:10px;">${parkType}</span>`;
+                }
+                // 備忘錄
+                const txNote = trans.note || '';
+                let noteCell = '-';
+                if (txNote && txNote !== 'nan' && txNote.trim()) {
+                    noteCell = `<span style="font-size:10px;color:#7f8c8d;" title="${txNote.replace(/"/g,'&quot;')}">📝 ${txNote.substring(0,20)}${txNote.length>20?'…':''}</span>`;
+                }
+                // 特殊交易標記（如單獨車位）
+                const isSpecial = txNote && (txNote.includes('車位') || txNote.includes('特殊'));
+                const rowStyle = isSpecial ? 'background:#fff8e1;' : '';
+                
+                html += `<tr style="${rowStyle}">
+                    <td>${date}</td>
+                    <td style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${addr}">${shortAddr}</td>
                     <td>${floor}/${totalFloor}</td>
-                    <td>${trans['建物現況格局-房'] || '0'}房${trans['建物現況格局-廳'] || '0'}廳${trans['建物現況格局-衛'] || '0'}衛</td>
+                    <td>${rooms}房${halls}廳${baths}衛</td>
                     <td>${ping.toFixed(1)} 坪</td>
-                    <td style="color:#e74c3c;font-weight:600;">${formatPrice(trans['總價元'])}</td>
+                    <td style="color:#e74c3c;font-weight:600;">${formatPrice(price)}</td>
                     <td>${convertUnitPrice(upPing)} ${getUnitPriceText()}</td>
+                    <td>${parkCell}</td>
+                    <td>${noteCell}</td>
                 </tr>`;
             });
 
-            html += '</tbody></table></div>';
+            html += '</tbody></table></div></div>';
             document.getElementById('modalBody').innerHTML = html;
         }
 
@@ -627,6 +737,9 @@
                     projects = result.projects || [];
                     displayProjects(projects);
                     addMarkersToMap(projects);
+                    if (projects.length === 0) {
+                        document.getElementById('projectsList').innerHTML = `<div style="text-align:center;padding:30px 15px;color:#999;"><div style="font-size:36px;margin-bottom:10px;">🔍</div><p style="font-size:13px;">找不到「${keyword}」相關建案</p><p style="font-size:11px;color:#bbb;margin-top:8px;">試試搜尋地區名稱、路名或建案名</p></div>`;
+                    }
                     if (window.innerWidth <= 1024) {
                         document.getElementById('leftPanel').classList.remove('open');
                     }
@@ -640,7 +753,7 @@
         async function applyFilters() {
             showLoading();
             try {
-                let url = `${API_BASE}/api/projects?limit=200`;
+                let url = `${API_BASE}/api/search?limit=200`;
                 const keyword = document.getElementById('mainSearch').value.trim();
                 if (keyword) url += `&keyword=${encodeURIComponent(keyword)}`;
                 
@@ -699,7 +812,7 @@
             document.getElementById('maxUnitPrice').value = '';
             document.getElementById('minPing').value = '';
             document.getElementById('maxPing').value = '';
-            document.getElementById('minYear').value = '2020';
+            document.getElementById('minYear').value = '2010';
             document.getElementById('maxYear').value = '2026';
             document.getElementById('minRatio').value = '';
             document.getElementById('maxRatio').value = '';
@@ -729,13 +842,12 @@
         }
         function resetMapView() { map.setView([25.0330, 121.5654], 12); }
         
-        function locateUser() {
+        function locateUser(btn) {
             if (!navigator.geolocation) {
                 alert('您的瀏覽器不支援地理定位功能');
                 return;
             }
             
-            const btn = event.target.closest('.map-control-btn');
             const originalText = btn.textContent;
             btn.textContent = '⏳';
             btn.disabled = true;
