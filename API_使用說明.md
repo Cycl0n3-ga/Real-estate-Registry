@@ -59,32 +59,32 @@ GET /api/search
 
 ### 範例 1：搜尋特定區域
 ```
-http://localhost:5000/api/search?keyword=大直
+http://localhost:5001/api/search?keyword=大直
 ```
 
 ### 範例 2：篩選近期交易（民國110年後）
 ```
-http://localhost:5000/api/search?min_year=110
+http://localhost:5001/api/search?min_year=110
 ```
 
 ### 範例 3：尋找中小坪數（50-100平方公尺）
 ```
-http://localhost:5000/api/search?min_area=50&max_area=100
+http://localhost:5001/api/search?min_area=50&max_area=100
 ```
 
 ### 範例 4：低公設比物件（20%以下）
 ```
-http://localhost:5000/api/search?max_ratio=20
+http://localhost:5001/api/search?max_ratio=20
 ```
 
 ### 範例 5：按面積排序
 ```
-http://localhost:5000/api/search?sort_by=area&sort_order=desc
+http://localhost:5001/api/search?sort_by=area&sort_order=desc
 ```
 
 ### 範例 6：組合查詢
 ```
-http://localhost:5000/api/search?keyword=新莊&min_year=110&min_area=30&max_area=80&max_ratio=35&sort_by=price&sort_order=asc
+http://localhost:5001/api/search?keyword=新莊&min_year=110&min_area=30&max_area=80&max_ratio=35&sort_by=price&sort_order=asc
 ```
 **說明**：搜尋新莊地區、民國110年後、30-80平方公尺、公設比35%以下的物件，按價格由低到高排序
 
@@ -195,7 +195,7 @@ AVG(
 
 ---
 
-**版本**：v2.0  
-**更新日期**：2026年2月17日  
-**服務器**：http://140.114.78.136:5000
+**版本**：v3.0  
+**更新日期**：2026年2月18日  
+**服務器**：http://localhost:5001
 
