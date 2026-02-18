@@ -29,10 +29,9 @@ ALL_lvr_land_a.csv
 ALL_lvr_land_b.csv
 *.duckdb
 geocode_cache.json
-land_reg/geodecoding/cache/
 
-# SQLite 資料庫 (>100MB)
-land_reg/land_a.db
+# SQLite / DuckDB 資料庫 (大型，不入 git)
+db/
 
 # 環境變數（含敏感資訊）
 .env

@@ -72,7 +72,7 @@ TAIWAN_CITIES = [
 ]
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-DEFAULT_DB = Path(__file__).parent / "cache" / "osm_addresses.db"
+DEFAULT_DB = Path(__file__).parent.parent.parent / "db" / "osm_addresses.db"
 
 # 全形→半形數字
 _FW2HW = str.maketrans('０１２３４５６７８９', '0123456789')

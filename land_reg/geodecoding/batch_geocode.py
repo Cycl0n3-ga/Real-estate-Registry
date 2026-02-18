@@ -61,7 +61,7 @@ from geocoder import (
 logger = logging.getLogger(__name__)
 
 # land_a.db 路徑
-DEFAULT_DB = os.path.join(SCRIPT_DIR, '..', 'land_a.db')
+DEFAULT_DB = os.path.join(SCRIPT_DIR, '..', '..', 'db', 'land_a.db')
 
 
 class LandDBProcessor:

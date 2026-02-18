@@ -43,7 +43,7 @@ from address2community import lookup as addr2com_lookup
 app = Flask(__name__, static_folder="static")
 CORS(app)
 
-DB_PATH = str(LAND_REG_DIR / "land_a.db")
+DB_PATH = str(LAND_DIR / "db" / "land_a.db")
 PING_TO_SQM = 3.30579
 
 # ── 行政區座標映射 ────────────────────────────────────────────────────────────
