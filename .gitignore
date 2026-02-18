@@ -25,8 +25,6 @@ ENV/
 Thumbs.db
 
 # 大型資料檔 (>100MB) - 不上傳
-ALL_lvr_land_a.csv
-ALL_lvr_land_b.csv
 *.duckdb
 geocode_cache.json
 

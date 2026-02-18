@@ -41,9 +41,9 @@ except Exception:
 # ========== 路徑設定 ==========
 SCRIPT_DIR = Path(__file__).parent
 LAND_DIR = SCRIPT_DIR.parent
-ADDRESS2COM_CSV = LAND_DIR / "address2com" / "address_community_mapping.csv"
-MANUAL_CSV = LAND_DIR / "address2com" / "manual_mapping.csv"
-B_TABLE_CSV = LAND_DIR / "ALL_lvr_land_b.csv"
+ADDRESS2COM_CSV = LAND_DIR / "db" / "address_community_mapping.csv"
+MANUAL_CSV = LAND_DIR / "db" / "manual_mapping.csv"
+B_TABLE_CSV = LAND_DIR / "db" / "ALL_lvr_land_b.csv"
 
 # ========== 全形半形轉換 ==========
 FULLWIDTH_DIGITS = "０１２３４５６７８９"
