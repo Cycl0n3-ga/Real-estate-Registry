@@ -29,8 +29,8 @@ from collections import defaultdict
 
 # ========== 路徑設定 ==========
 SCRIPT_DIR = Path(__file__).parent
-CSV_PATH = SCRIPT_DIR / "address_community_mapping.csv"
-MANUAL_CSV = SCRIPT_DIR / "manual_mapping.csv"
+CSV_PATH = SCRIPT_DIR.parent / "db" / "address_community_mapping.csv"
+MANUAL_CSV = SCRIPT_DIR.parent / "db" / "manual_mapping.csv"
 
 # ========== 全形半形轉換 ==========
 FULLWIDTH_DIGITS = "０１２３４５６７８９"

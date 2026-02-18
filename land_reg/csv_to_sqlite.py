@@ -20,7 +20,7 @@ import time
 
 # ── 路徑設定 ──────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CSV = os.path.join(SCRIPT_DIR, '..', 'ALL_lvr_land_a.csv')
+DEFAULT_CSV = os.path.join(SCRIPT_DIR, '..', 'db', 'ALL_lvr_land_a.csv')
 DEFAULT_DB  = os.path.join(SCRIPT_DIR, '..', 'db', 'land_a.db')
 
 CSV_PATH = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CSV

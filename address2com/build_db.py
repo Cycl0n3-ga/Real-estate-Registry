@@ -19,9 +19,9 @@ from collections import defaultdict
 # ========== 路徑設定 ==========
 SCRIPT_DIR = Path(__file__).parent
 LAND_DIR = SCRIPT_DIR.parent
-B_TABLE = LAND_DIR / "ALL_lvr_land_b.csv"
-OUTPUT_CSV = SCRIPT_DIR / "address_community_mapping.csv"
-MANUAL_CSV = SCRIPT_DIR / "manual_mapping.csv"
+B_TABLE = LAND_DIR / "db" / "ALL_lvr_land_b.csv"
+OUTPUT_CSV = SCRIPT_DIR.parent / "db" / "address_community_mapping.csv"
+MANUAL_CSV = SCRIPT_DIR.parent / "db" / "manual_mapping.csv"
 
 # ========== 全形→半形 ==========
 FULLWIDTH_DIGITS = "０１２３４５６７８９"
