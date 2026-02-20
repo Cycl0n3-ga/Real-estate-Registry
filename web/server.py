@@ -25,9 +25,10 @@ LAND_REG_DIR = LAND_DIR / "land_reg"
 ADDR_SEARCH_DIR = LAND_REG_DIR / "address_search"
 COM2ADDR_DIR = LAND_DIR / "com2address"
 ADDR2COM_DIR = LAND_DIR / "address2com"
+GEODECODING_DIR = LAND_REG_DIR / "geodecoding"
 
 # 將模組路徑加入 sys.path
-for p in [str(ADDR_SEARCH_DIR), str(COM2ADDR_DIR), str(ADDR2COM_DIR)]:
+for p in [str(ADDR_SEARCH_DIR), str(COM2ADDR_DIR), str(ADDR2COM_DIR), str(GEODECODING_DIR)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
@@ -38,6 +39,7 @@ from address_transfer import (
 )
 from community2address import Community2AddressLookup
 from address2community import lookup as addr2com_lookup
+from geocoder import TaiwanGeocoder
 
 # ── Flask 設定 ────────────────────────────────────────────────────────────────
 app = Flask(__name__, static_folder="static")
@@ -128,6 +130,8 @@ def get_district_coords(district):
 # ── 全域資料 ──────────────────────────────────────────────────────────────────
 com2addr_engine = None
 com2addr_ready = False
+geocoder_engine = None
+geocoder_ready = False
 
 
 def init_com2addr():
@@ -142,6 +146,24 @@ def init_com2addr():
         print(f"⚠️  com2address 載入失敗: {e}")
         import traceback; traceback.print_exc()
         com2addr_ready = True
+
+
+def init_geocoder():
+    """背景初始化地理編碼引擎"""
+    global geocoder_engine, geocoder_ready
+    try:
+        print("🌍 載入 TaiwanGeocoder...")
+        geocoder_engine = TaiwanGeocoder(
+            cache_dir=str(LAND_DIR / "db"),
+            provider="nominatim",
+            concurrency=1
+        )
+        geocoder_ready = True
+        print("✅ TaiwanGeocoder 就緒")
+    except Exception as e:
+        print(f"⚠️  TaiwanGeocoder 載入失敗: {e}")
+        import traceback; traceback.print_exc()
+        geocoder_ready = True
 
 
 # ── 工具函式 ──────────────────────────────────────────────────────────────────
@@ -171,6 +193,34 @@ def format_roc_date(roc_date):
         return None
 
 
+def get_address_coords(address: str, district: str = "") -> tuple:
+    """
+    使用 OSM Nominatim 地理編碼取得準確座標
+    
+    Args:
+        address: 完整地址
+        district: 行政區（輔助用）
+        
+    Returns:
+        (lat, lng, source_level) 元組，其中 source_level 為 'exact'|'road'|'district'|None
+    """
+    global geocoder_engine, geocoder_ready
+    
+    if not geocoder_ready or geocoder_engine is None:
+        return None, None, None
+    
+    try:
+        result = geocoder_engine.geocode(address, district=district)
+        if result and 'lat' in result and 'lng' in result:
+            level = result.get('level', 'unknown')  # 'exact', 'road', 'district' 等
+            return result['lat'], result['lng'], level
+    except Exception as e:
+        # 靜默失敗，回退到行政區座標
+        pass
+    
+    return None, None, None
+
+
 def format_tx_row(row: dict) -> dict:
     """將 address_search 回傳的 row 轉為前端友好格式"""
     total_price = row.get("total_price", 0) or 0
@@ -196,21 +246,44 @@ def format_tx_row(row: dict) -> dict:
     floor_raw = str(row.get("floor_level", "") or "")
     total_floors_raw = str(row.get("total_floors", "") or "")
     district = str(row.get("district", "") or "")
+    address = str(row.get("address", "") or "")
 
-    # 座標：優先用 DB 中的座標，否則用行政區
-    lat = row.get("lat")
-    lng = row.get("lng")
+    # 座標：優先用 OSM Geocoding，其次用 DB 中的座標，最後用行政區
+    lat = None
+    lng = None
+    coord_source = "unknown"
+    
+    # 優先嘗試 OSM Geocoding
+    if geocoder_ready and geocoder_engine is not None and address:
+        geocoded_lat, geocoded_lng, geocoded_source = get_address_coords(address, district)
+        if geocoded_lat and geocoded_lng:
+            lat = geocoded_lat
+            lng = geocoded_lng
+            coord_source = geocoded_source or "osm"
+    
+    # 回退：DB 中的座標
+    if not lat or not lng:
+        lat = row.get("lat")
+        lng = row.get("lng")
+        if lat and lng:
+            coord_source = "db_cache"
+    
+    # 回退：行政區座標
     if not lat or not lng:
         lat, lng = get_district_coords(district)
-    # 加入隨機偏移（用地址 hash）避免完全重疊
-    if lat and lng:
-        addr = str(row.get("address", ""))
-        h = abs(hash(addr + date_raw))
+        coord_source = "district"
+    
+    # 只在座標來自行政區時才加折疊偏移
+    # OSM 精確座標不需要偏移，DB 快取也不需要
+    if lat and lng and coord_source == "district":
+        # 使用確定的折疊方式（基於地址 hash）而不是隨機
+        h = abs(hash(address + date_raw))
+        # 折疊偏移：确保同一地址每次都是同樣的偏移，但不同地址微小不同
         lat = lat + ((h % 1000) - 500) * 0.00005
         lng = lng + (((h >> 10) % 1000) - 500) * 0.00005
 
     return {
-        "address": str(row.get("address", "") or ""),
+        "address": address,
         "district": district,
         "date": format_roc_date(date_raw) or date_raw,
         "date_raw": date_raw,
@@ -323,10 +396,8 @@ def api_search():
     if not keyword:
         return jsonify({"success": False, "error": "缺少 keyword 參數"}), 400
 
-    sort_by = request.args.get("sort", "date").strip()
-    if sort_by not in SORT_OPTIONS and sort_by != "count":
-        sort_by = "date"
-    limit = min(int(request.args.get("limit", 200)), 1000)
+    sort_by = "date"  # 排序交給前端處理，後端固定用日期排序
+    limit = min(int(request.args.get("limit", 500)), 2000)
     filters = parse_filters_from_request()
 
     search_type = "address"
@@ -412,27 +483,7 @@ def api_search():
             print(f"⚠️  address_search 錯誤: {e}")
             return jsonify({"success": False, "error": str(e)}), 500
 
-    # 排序
-    sort_map = {
-        "date": lambda t: t.get("date_raw", ""),
-        "price": lambda t: t.get("price", 0),
-        "unit_price": lambda t: t.get("unit_price_ping", 0),
-        "ping": lambda t: t.get("area_ping", 0),
-        "public_ratio": lambda t: t.get("public_ratio", 999),
-    }
-    
-    if sort_by == "count":
-        # 計算每個地址的交易筆數，然後排序
-        addr_count = {}
-        for tx in all_transactions:
-            addr = tx.get("address", "")
-            addr_count[addr] = addr_count.get(addr, 0) + 1
-        sort_fn = lambda t: -addr_count.get(t.get("address", ""), 0)
-        all_transactions.sort(key=sort_fn)
-    else:
-        sort_fn = sort_map.get(sort_by, sort_map["date"])
-        reverse = sort_by != "public_ratio"
-        all_transactions.sort(key=sort_fn, reverse=reverse)
+    # 截斷到 limit（排序由前端負責）
     all_transactions = all_transactions[:limit]
 
     summary = compute_summary(all_transactions)
@@ -506,5 +557,8 @@ if __name__ == "__main__":
 
     t = threading.Thread(target=init_com2addr, daemon=True)
     t.start()
+    
+    t2 = threading.Thread(target=init_geocoder, daemon=True)
+    t2.start()
 
     app.run(debug=False, host="0.0.0.0", port=5001)

@@ -1,5 +1,7 @@
-# 日誌
+# 忽略日誌文件
 *.log
+app.log
+server.log
 nohup.out
 
 # Python
@@ -24,14 +26,19 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# 大型資料檔 (>100MB) - 不上傳
+# 大型資料檔 (>100MB)
+ALL_lvr_land_a.csv
+ALL_lvr_land_b.csv
+*.db
 *.duckdb
+*.sqlite
 geocode_cache.json
 
-# SQLite / DuckDB 資料庫 (大型，不入 git)
-db/
+# 轉換 log
+address_convert/*.log
 
 # 環境變數（含敏感資訊）
 .env
 .env.local
 .env.production
+app.log
