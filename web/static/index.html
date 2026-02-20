@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>良富居地產</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.1/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.1/dist/MarkerCluster.Default.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.1/dist/leaflet.markercluster.js"></script>
 <style>
 /* ========== 全域 ========== */
 *{margin:0;padding:0;box-sizing:border-box}
@@ -99,6 +102,12 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
   color:var(--text2);
 }
 .sort-bar button.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.sort-bar .limit-select{
+  margin-left:auto;padding:4px 8px;font-size:11px;
+  border:1px solid var(--border);border-radius:14px;
+  background:#fff;color:var(--text2);cursor:pointer;
+  outline:none;
+}
 
 /* Summary */
 .summary-bar{
@@ -238,6 +247,13 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
     <button data-sort="ping" onclick="setSort(this)">坪數大→小</button>
     <button data-sort="public_ratio" onclick="setSort(this)">公設低→高</button>
     <button data-sort="count" onclick="setSort(this)">成交筆數多→少</button>
+    <select id="limitSelect" class="limit-select" onchange="doSearch()" title="顯示筆數">
+      <option value="100">100筆</option>
+      <option value="200">200筆</option>
+      <option value="500" selected>500筆</option>
+      <option value="1000">1000筆</option>
+      <option value="2000">全部</option>
+    </select>
   </div>
 
   <!-- Summary -->
@@ -268,6 +284,7 @@ let unit = 'ping';           // 'ping' | 'sqm'
 let currentSort = 'date';
 let txData = [];              // 目前的搜尋結果
 let activeCardIdx = -1;
+let markerClusterGroup;       // MarkerClusterGroup 用於聚類
 
 // ═══════════════════════════════════════════════════════════════
 // 地圖初始化
@@ -277,7 +294,17 @@ function initMap(){
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
     maxZoom:19, attribution:'© OpenStreetMap'
   }).addTo(map);
-  markerGroup = L.layerGroup().addTo(map);
+  
+  // 使用 MarkerClusterGroup 替代 layerGroup
+  markerClusterGroup = L.markerClusterGroup({
+    maxClusterRadius: 80,
+    disableClusteringAtZoom: 17
+  });
+  map.addLayer(markerClusterGroup);
+  markerGroup = markerClusterGroup;  // 保持向後相容
+  
+  // 添加圖例
+  addLegend();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -364,24 +391,44 @@ function getFilterParams(){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 排序
+// 前端排序（全部在白調內處理、不再呼叫 API）
 // ═══════════════════════════════════════════════════════════════
+function sortData(sortType){
+  switch(sortType){
+    case 'date':
+      txData.sort((a,b) => (b.date_raw||'').localeCompare(a.date_raw||''));
+      break;
+    case 'price':
+      txData.sort((a,b) => (b.price||0) - (a.price||0));
+      break;
+    case 'unit_price':
+      txData.sort((a,b) => (b.unit_price_ping||0) - (a.unit_price_ping||0));
+      break;
+    case 'ping':
+      txData.sort((a,b) => (b.area_ping||0) - (a.area_ping||0));
+      break;
+    case 'public_ratio':
+      txData.sort((a,b) => (a.public_ratio||999) - (b.public_ratio||999));
+      break;
+    case 'count':{
+      const addrCount = {};
+      txData.forEach(tx => {
+        addrCount[tx.address] = (addrCount[tx.address]||0) + 1;
+      });
+      txData.sort((a,b) => addrCount[b.address] - addrCount[a.address]);
+      break;
+    }
+  }
+}
+
 function setSort(btn){
   document.querySelectorAll('.sort-bar button').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   currentSort = btn.dataset.sort;
-  if(currentSort === 'count' && txData.length > 0){
-    // 成交筆數排序在前端直接做
-    const addrCount = {};
-    txData.forEach(tx => {
-      const key = tx.address;
-      addrCount[key] = (addrCount[key] || 0) + 1;
-    });
-    txData.sort((a, b) => addrCount[b.address] - addrCount[a.address]);
+  if(txData.length > 0){
+    sortData(currentSort);
     renderResults();
-  } else {
-    // 其他排序需要重新搜尋
-    doSearch();
+    plotMarkers();
   }
 }
 
@@ -395,8 +442,9 @@ async function doSearch(){
   const results = document.getElementById('results');
   results.innerHTML = '<div class="loading">🔍 搜尋中…</div>';
 
+  const limitVal = document.getElementById('limitSelect').value;
   const url = '/api/search?keyword=' + encodeURIComponent(kw) +
-              '&sort=' + currentSort + '&limit=300' + getFilterParams();
+              '&limit=' + limitVal + getFilterParams();
   try{
     const resp = await fetch(url);
     const data = await resp.json();
@@ -416,6 +464,9 @@ async function doSearch(){
     window._communityName = data.community_name || null;
     window._searchType = data.search_type || 'address';
     window._summary = data.summary || {};
+
+    // 前端排序
+    sortData(currentSort);
 
     renderResults();
     renderSummary();
@@ -496,21 +547,56 @@ function renderSummary(){
 // 地圖 marker
 // ═══════════════════════════════════════════════════════════════
 function plotMarkers(){
-  markerGroup.clearLayers();
+  markerClusterGroup.clearLayers();
   const bounds = [];
 
   txData.forEach((tx, i) => {
     if(!tx.lat || !tx.lng) return;
 
-    const color = tx.unit_price_ping > 0
-      ? (tx.unit_price_ping/10000 > 60 ? '#ea4335' : tx.unit_price_ping/10000 > 30 ? '#f9ab00' : '#34a853')
-      : '#888';
+    // 依據總價區間決定顏色
+    let color = '#888';
+    if (tx.price > 0) {
+      if (tx.price > 40000000) {
+        color = '#ea4335'; // > 4000萬
+      } else if (tx.price > 20000000) {
+        color = '#f9ab00'; // 2000~4000萬
+      } else {
+        color = '#34a853'; // ≤ 2000萬
+      }
+    }
 
-    const marker = L.circleMarker([tx.lat, tx.lng], {
-      radius: 6, fillColor: color, color: '#fff',
-      weight: 1.5, fillOpacity: 0.85
+    // 格式化總價用於顯示
+    const priceText = tx.price >= 100000000 
+      ? (tx.price / 100000000).toFixed(1) + '億'
+      : (tx.price / 10000).toFixed(0) + '萬';
+
+    // 建立自訂 marker HTML
+    const markerHtml = `
+      <div style="
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 50px;
+        height: 50px;
+        background: ${color};
+        border: 3px solid white;
+        border-radius: 50%;
+        font-size: 12px;
+        font-weight: bold;
+        color: white;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+      ">
+        ${priceText}
+      </div>
+    `;
+
+    const markerIcon = L.divIcon({
+      html: markerHtml,
+      iconSize: [50, 50],
+      className: 'price-marker'
     });
 
+    const marker = L.marker([tx.lat, tx.lng], {icon: markerIcon});
     marker.bindPopup(makePopup(tx), {maxWidth:300});
     marker.on('click', () => {
       activeCardIdx = i;
@@ -520,7 +606,7 @@ function plotMarkers(){
       if(card) card.scrollIntoView({behavior:'smooth', block:'center'});
     });
 
-    markerGroup.addLayer(marker);
+    markerClusterGroup.addLayer(marker);
     bounds.push([tx.lat, tx.lng]);
   });
 
@@ -560,6 +646,63 @@ function selectTx(idx){
       }
     });
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 圖例
+// ═══════════════════════════════════════════════════════════════
+function addLegend(){
+  const legend = L.control({position: 'bottomright'});
+  
+  legend.onAdd = function(){
+    const div = L.DomUtil.create('div', 'info legend');
+    div.innerHTML = `
+      <style>
+        .legend {
+          background: white;
+          padding: 12px;
+          border-radius: 5px;
+          box-shadow: 0 0 15px rgba(0,0,0,0.2);
+          font-size: 13px;
+          line-height: 1.8;
+        }
+        .legend-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 6px;
+        }
+        .legend-color {
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          border: 2px solid #fff;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+        }
+      </style>
+      <div style="font-weight: bold; margin-bottom: 8px;">總價區間</div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #34a853;"></div>
+        <span>≤ 2000萬</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #f9ab00;"></div>
+        <span>2000 ~ 4000萬</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #ea4335;"></div>
+        <span>&gt; 4000萬</span>
+      </div>
+    `;
+    
+    // 阻止地圖事件冒泡
+    L.DomEvent.disableScrollPropagation(div);
+    L.DomEvent.disableClickPropagation(div);
+    
+    return div;
+  };
+  
+  legend.addTo(map);
 }
 
 // ═══════════════════════════════════════════════════════════════

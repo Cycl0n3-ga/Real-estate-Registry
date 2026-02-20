@@ -342,6 +342,94 @@ def generate_address_variants(address: str) -> list[str]:
     return sorted(all_variants)
 
 
+def _generate_fallback_variants(query: str) -> list[str]:
+    """
+    對於 FTS5 無結果的查詢，生成漸進式剝離的變體。
+    
+    例如：'三民路29巷5號' 不存在，逐步嘗試：
+      1. '三民路29巷5號'    (原始)
+      2. '三民路29巷5'      (去掉號)
+      3. '三民路29巷'       (去掉號+數字)
+      4. '三民路29'         (去掉巷)
+      5. '三民路'           (去掉29)
+    
+    這樣避免回傳 "三民路29巷1號5樓" 這類模糊匹配。
+    """
+    variants = [query]
+    
+    # 策略：從右到左移除特定字符和相鄰的數字
+    current = query
+    
+    # 移除末尾的 "號" 及其前的數字
+    if '號' in current:
+        idx = current.rfind('號')
+        if idx > 0:
+            # 向左找到最後一個數字位置
+            j = idx - 1
+            while j >= 0 and (current[j].isdigit() or current[j] in '０１２３４５６７８９'):
+                j -= 1
+            variant = current[:j+1]
+            if variant and variant != current:
+                variants.append(variant)
+                current = variant
+    
+    # 移除末尾的 "樓" 及其前的數字
+    if '樓' in current:
+        idx = current.rfind('樓')
+        if idx > 0:
+            j = idx - 1
+            while j >= 0 and (current[j].isdigit() or current[j] in '０１２３４５６７８９'):
+                j -= 1
+            variant = current[:j+1]
+            if variant and variant != current:
+                variants.append(variant)
+                current = variant
+    
+    # 移除末尾的 "之" 及其後的內容
+    if '之' in current:
+        idx = current.rfind('之')
+        if idx > 0:
+            variant = current[:idx]
+            if variant and variant != current:
+                variants.append(variant)
+                current = variant
+    
+    # 移除末尾的 "巷" 及其前的數字
+    if '巷' in current:
+        idx = current.rfind('巷')
+        if idx > 0:
+            j = idx - 1
+            while j >= 0 and (current[j].isdigit() or current[j] in '０１２３４５６７８９'):
+                j -= 1
+            variant = current[:j+1]
+            if variant and variant != current:
+                variants.append(variant)
+                current = variant
+    
+    # 移除末尾的 "弄" 及其前的數字
+    if '弄' in current:
+        idx = current.rfind('弄')
+        if idx > 0:
+            j = idx - 1
+            while j >= 0 and (current[j].isdigit() or current[j] in '０１２３４５６７８９'):
+                j -= 1
+            variant = current[:j+1]
+            if variant and variant != current:
+                variants.append(variant)
+                current = variant
+    
+    # 最後只保留路/街部分（最寬鬆的匹配）
+    for marker in ['路', '街', '大道']:
+        if marker in current:
+            idx = current.rfind(marker)
+            variant = current[:idx+1]
+            if variant and variant != current and variant not in variants:
+                variants.append(variant)
+                break
+    
+    return variants
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 篩選參數解析工具
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -397,9 +485,17 @@ def build_search_query(variants: list[str],
         unit_price_min/max: float    單坪萬元
         price_min/max   : float      總價萬元
     """
-    # ── 地址比對條件 ─────────────────────────────────────────────────────────
-    addr_conds = ' OR '.join(['address LIKE ?' for _ in variants])
-    params: list = [f'%{v}%' for v in variants]
+    # ── 地址比對條件（FTS5 全文搜尋 + LIKE 優化）─────────────────────────────────
+    # 策略：優先用第一個（最精確的）變體查詢，避免多個 OR 條件
+    primary_variant = variants[0] if variants else address
+    
+    fts_queries = [f'"{primary_variant}*"']
+    fts_query = fts_queries[0]
+    
+    addr_conds = """id IN (
+        SELECT id FROM address_fts WHERE address MATCH ?
+    )"""
+    params: list = [fts_query]
 
     # ── CTE：base：原始欄位 + 計算欄位 ──────────────────────────────────────
     cte_base = f"""
@@ -545,7 +641,9 @@ def search_address(address: str,
                    limit: int = 200,
                    show_sql: bool = False) -> dict:
     """
-    主搜尋函式。
+    主搜尋函式（FTS5 優先，漸進式 LIKE 後備）。
+    當 FTS5 無結果時，逐步去掉末尾條件再試（而非直接模糊匹配）。
+    
     回傳 dict: {
         'query':    原始輸入,
         'variants': 所有搜尋變體,
@@ -571,14 +669,98 @@ def search_address(address: str,
         print(sql)
         print("參數:")
         for i, p in enumerate(params):
-            print(f"  [{i+1}] {p}")
+            print(f"  [{i+1}] {p[:60]+'...' if isinstance(p, str) and len(p) > 60 else p}")
         print("────────────────────────────────────────────────────────\n")
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    cursor = conn.execute(sql, params)
-    rows = [dict(r) for r in cursor.fetchall()]
-    conn.close()
+    
+    try:
+        cursor = conn.execute(sql, params)
+        rows = [dict(r) for r in cursor.fetchall()]
+        
+        # 如果 FTS5 查詢沒有結果，改用 LIKE 搜尋所有數字格式變體
+        # 核心問題：資料庫地址大量使用全形數字（如 ２９、５），
+        # FTS5 unicode61 tokenizer 會把全形數字與 CJK 文字合併為單一 token，
+        # 導致 FTS5 MATCH 完全失效。須改用 LIKE 並帶入所有半形/全形變體。
+        if len(rows) == 0:
+            FTS_PATTERN = """id IN (
+        SELECT id FROM address_fts WHERE address MATCH ?
+    )"""
+            
+            # Step 1: 用所有變體（含全形數字）做 LIKE 搜尋
+            like_cond = " OR ".join(["address LIKE ?" for _ in variants])
+            sql_like = sql.replace(FTS_PATTERN, f"({like_cond})")
+            params_like = [f'%{v}%' for v in variants] + params[1:]
+            
+            cursor = conn.execute(sql_like, params_like)
+            rows = [dict(r) for r in cursor.fetchall()]
+            
+            if rows and show_sql:
+                print(f"   [從 LIKE 全變體搜尋取得 {len(rows)} 筆結果]")
+            
+            # Step 2: 如果仍無結果，漸進式剝離地址末段，
+            #         每一層都產生所有數字格式變體再搜尋
+            if not rows:
+                fallback_list = _generate_fallback_variants(address)
+                for fb_query in fallback_list[1:]:
+                    fb_variants = generate_address_variants(fb_query)
+                    like_cond = " OR ".join(["address LIKE ?" for _ in fb_variants])
+                    sql_fb = sql.replace(FTS_PATTERN, f"({like_cond})")
+                    params_fb = [f'%{v}%' for v in fb_variants] + params[1:]
+                    
+                    cursor = conn.execute(sql_fb, params_fb)
+                    rows = [dict(r) for r in cursor.fetchall()]
+                    
+                    if rows:
+                        if show_sql:
+                            print(f"   [從漸進式 LIKE 後備取得結果: {fb_query} ({len(fb_variants)} 變體)]")
+                        break
+    
+    except sqlite3.OperationalError as e:
+        if 'address_fts' in str(e):
+            print("⚠️  FTS5 表不存在或查詢失敗，使用傳統 LIKE 查詢...")
+            # 改用傳統 LIKE 查詢
+            sql_fallback = """
+            WITH
+            base AS (
+                SELECT
+                    id, district, address, transaction_type,
+                    transaction_date, floor_level, total_floors,
+                    building_type, total_price, unit_price,
+                    building_area_sqm, rooms, halls, bathrooms,
+                    has_management, elevator, parking_type,
+                    parking_area_sqm, parking_price, note,
+                    main_building_area, attached_area, balcony_area,
+                    CASE WHEN building_area_sqm > 0
+                         THEN ROUND(building_area_sqm / 3.30579, 1) ELSE NULL END AS ping,
+                    CASE WHEN building_area_sqm > 0 AND main_building_area > 0 AND building_area_sqm > main_building_area
+                         THEN ROUND((building_area_sqm - COALESCE(main_building_area, 0) - COALESCE(attached_area, 0) - COALESCE(balcony_area, 0)) / building_area_sqm * 100, 1)
+                         ELSE NULL END AS public_ratio,
+                    CASE WHEN building_area_sqm > 0 AND total_price > 0
+                         THEN ROUND(total_price / 10000.0 / (building_area_sqm / 3.30579), 1) ELSE NULL END AS unit_price_per_ping,
+                    CAST(SUBSTR(transaction_date, 1, LENGTH(transaction_date) - 4) AS INTEGER) AS roc_year
+                FROM transactions
+                WHERE (""" + " OR ".join([f"address LIKE ?" for _ in variants]) + """)
+                  AND address != ''
+                  AND address NOT LIKE '%land sector%'
+            ),
+            counted AS (
+                SELECT *, COUNT(*) OVER (PARTITION BY address) AS addr_count
+                FROM base
+            )
+            SELECT * FROM counted
+            ORDER BY """ + SORT_OPTIONS.get(sort_by, SORT_OPTIONS['date']) + f"""
+            LIMIT {limit}
+            """
+            
+            params_fallback = [f'%{v}%' for v in variants]
+            cursor = conn.execute(sql_fallback, params_fallback)
+            rows = [dict(r) for r in cursor.fetchall()]
+        else:
+            raise
+    finally:
+        conn.close()
 
     return {
         'query':    address,
@@ -588,6 +770,7 @@ def search_address(address: str,
         'total':    len(rows),
         'results':  rows,
     }
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

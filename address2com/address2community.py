@@ -319,6 +319,8 @@ class AddressCommunityLookup:
         self.verbose = verbose
         self.data = None
         self.indices = None
+        self.fts5_conn = None
+        self.has_fts5 = False
         self._load_csv()
 
     def _load_csv(self):
@@ -344,7 +346,7 @@ class AddressCommunityLookup:
         self._build_indices()
 
     def _build_indices(self):
-        """建立查詢索引"""
+        """建立查詢索引（包含 FTS5）"""
         print(f"📇 建立索引...")
         self.indices = {
             "normalized": {},
@@ -370,10 +372,78 @@ class AddressCommunityLookup:
             if road:
                 self.indices["road"][road].append(row)
 
+        # 嘗試建立 FTS5 索引（對 CSV 內容）
+        self._setup_fts5_csv_index()
+        
         print(f"  ✅ 索引建立完成")
 
+    def _setup_fts5_csv_index(self):
+        """為 CSV 資料建立 FTS5 虛擬索引"""
+        try:
+            import sqlite3
+            import tempfile
+            
+            # 建立臨時記憶體 DB
+            conn = sqlite3.connect(':memory:')
+            cursor = conn.cursor()
+            
+            # 建立 FTS5 表
+            cursor.execute("""
+                CREATE VIRTUAL TABLE community_fts USING fts5(
+                    address,
+                    community,
+                    tokenize = 'unicode61'
+                )
+            """)
+            
+            # 填入 CSV 資料
+            for row in self.data:
+                addr = row.get("正規化地址", "")
+                comm = row.get("社區名稱", "")
+                if addr and comm:
+                    cursor.execute(
+                        "INSERT INTO community_fts VALUES (?, ?)",
+                        (addr, comm)
+                    )
+            
+            conn.commit()
+            self.fts5_conn = conn
+            self.has_fts5 = True
+            print(f"  ✅ FTS5 CSV 索引已建立")
+        except Exception as e:
+            self.has_fts5 = False
+            if hasattr(self, 'verbose') and self.verbose:
+                print(f"  ⚠️  FTS5 setup failed: {e}")
+
+    def _query_fts5(self, norm: str) -> list:
+        """用 FTS5 查詢 CSV（模糊搜尋）"""
+        if not self.has_fts5:
+            return []
+        
+        try:
+            cursor = self.fts5_conn.cursor()
+            # FTS5 MATCH 查詢：搜尋包含所有詞的文件
+            cursor.execute("""
+                SELECT DISTINCT community FROM community_fts 
+                WHERE address MATCH ?
+                LIMIT 10
+            """, (norm,))
+            
+            communities = [row[0] for row in cursor.fetchall()]
+            results = []
+            for comm in communities:
+                # 從原始 data 找完整記錄
+                for row in self.data:
+                    if row.get("社區名稱") == comm:
+                        results.append(row)
+                        break
+            return results
+        except Exception:
+            return []
+
+
     def query(self, address: str, top_n: int = 5) -> dict:
-        """查詢地址對應的社區/建案名稱"""
+        """查詢地址對應的社區/建案名稱（支援 FTS5）"""
         norm = normalize_address(address)
         input_district = extract_district(address)
         input_city = infer_city(address)
@@ -462,7 +532,29 @@ class AddressCommunityLookup:
                     if self.verbose and results:
                         print(f"     ✅ Level 4: {results[-1]['community']}")
 
-        # Level 5: 591 API 線上查詢
+
+        # Level 5: FTS5 模糊搜尋（新增）
+        if not results or all(r["confidence"] < 30 for r in results):
+            if self.has_fts5:
+                fts_results = self._query_fts5(norm)
+                if fts_results:
+                    seen = set()
+                    for row in fts_results[:5]:
+                        comm = row.get("社區名稱")
+                        if comm and comm not in seen:
+                            results.append({
+                                "community": comm,
+                                "confidence": 55,
+                                "match_level": "FTS5 模糊搜尋",
+                                "district": row.get("鄉鎮市區", ""),
+                                "source": row.get("資料來源", ""),
+                                "count": int(row.get("交易筆數", 0)) if row.get("交易筆數") else 0,
+                            })
+                            seen.add(comm)
+                    if self.verbose and results:
+                        print(f"     ✅ Level 5 FTS5: {results[-1]['community']}")
+
+        # Level 6: 591 API 線上查詢
         if self.enable_api and (not results or all(r["confidence"] < 70 for r in results)):
             api_results = self._query_591_api(address, norm)
             if api_results:
