@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-address2community.py - 地址→社區/建案名稱 查詢工具 (CSV 版)
+address2community.py - 地址→社區/建案名稱 查詢工具 (SQLite + 591 API 版)
+
+資料來源：
+  1. transactions.db - 內政部實價登錄交易資料庫（約 180 萬筆有社區名稱）
+  2. 591 即時 API   - 本地查不到時自動呼叫 591 線上查詢
 
 特色：
-  - CSV 資料：簡單易編輯、易於傳輸
+  - SQLite 直查：無需預先建 CSV，直接查 transactions.db
   - 591 即時 API：本地查不到時自動呼叫 591 線上查詢
   - 多層匹配：精確地址 → 門牌號 → 巷弄 → 路段 → 591 API
 
@@ -13,13 +17,11 @@ address2community.py - 地址→社區/建案名稱 查詢工具 (CSV 版)
   3. 批次：    python3 address2community.py --batch input.txt
   4. 模組：    from address2community import lookup
               result = lookup("三民路29巷5號")
-
-需先執行 build_db.py 建立 CSV（僅需一次）。
 """
 
-import csv
 import json
 import re
+import sqlite3
 import sys
 import time
 import urllib.parse
@@ -29,17 +31,37 @@ from collections import defaultdict
 
 # ========== 路徑設定 ==========
 SCRIPT_DIR = Path(__file__).parent
-CSV_PATH = SCRIPT_DIR.parent / "db" / "address_community_mapping.csv"
-MANUAL_CSV = SCRIPT_DIR.parent / "db" / "manual_mapping.csv"
+DB_PATH = SCRIPT_DIR.parent / "db" / "transactions.db"
 
 # ========== 全形半形轉換 ==========
 FULLWIDTH_DIGITS = "０１２３４５６７８９"
 HALFWIDTH_DIGITS = "0123456789"
 FW_TO_HW = str.maketrans(FULLWIDTH_DIGITS, HALFWIDTH_DIGITS)
+HW_TO_FW = str.maketrans(HALFWIDTH_DIGITS, FULLWIDTH_DIGITS)
 
 
 def fullwidth_to_halfwidth(s: str) -> str:
     return s.translate(FW_TO_HW)
+
+
+def halfwidth_to_fullwidth(s: str) -> str:
+    return s.translate(HW_TO_FW)
+
+
+# ========== 城市代碼對照 ==========
+CITY_CODE_TO_NAME = {
+    "A": "臺北市", "B": "臺中市", "C": "基隆市", "D": "臺南市",
+    "E": "高雄市", "F": "新北市", "G": "宜蘭縣", "H": "桃園市",
+    "I": "嘉義市", "J": "新竹縣", "K": "苗栗縣", "M": "南投縣",
+    "N": "彰化縣", "O": "新竹市", "P": "雲林縣", "Q": "嘉義縣",
+    "T": "屏東縣", "U": "花蓮縣", "V": "臺東縣", "W": "金門縣",
+    "X": "澎湖縣", "Z": "連江縣",
+}
+CITY_NAME_TO_CODE = {v: k for k, v in CITY_CODE_TO_NAME.items()}
+# 加入台→臺的對照
+CITY_NAME_TO_CODE.update({
+    "台北市": "A", "台中市": "B", "台南市": "D", "台東縣": "V",
+})
 
 
 # ========== 縣市列表 ==========
@@ -96,7 +118,6 @@ DISTRICT_TO_CITY = {
     "清水區": "臺中市", "梧棲區": "臺中市", "龍井區": "臺中市",
     "大肚區": "臺中市", "后里區": "臺中市", "霧峰區": "臺中市",
     # 台南市
-    "東區": "臺南市", "北區": "臺南市", "南區": "臺南市",
     "安平區": "臺南市", "安南區": "臺南市", "永康區": "臺南市",
     "仁德區": "臺南市", "歸仁區": "臺南市", "新化區": "臺南市",
     "善化區": "臺南市",
@@ -124,7 +145,8 @@ def extract_district(addr: str) -> str:
         if s.startswith(city):
             s = s[len(city):]
             break
-    m = re.match(r"([\u4e00-\u9fff]{1,3}[區鎮鄉市])", s)
+    # 使用非貪婪匹配，避免 "西屯區市政..." 誤匹配為 "西屯區市"
+    m = re.match(r"([\u4e00-\u9fff]{1,3}?[區鎮鄉市])", s)
     return m.group(1) if m else ""
 
 
@@ -182,6 +204,14 @@ def infer_city(addr: str) -> str:
     district = extract_district(addr)
     if district and district in DISTRICT_TO_CITY:
         return DISTRICT_TO_CITY[district]
+    return ""
+
+
+def get_city_code(addr: str) -> str:
+    """從地址取得城市代碼 (A/B/C...)"""
+    city = infer_city(addr)
+    if city:
+        return CITY_NAME_TO_CODE.get(city, "")
     return ""
 
 
@@ -312,249 +342,308 @@ class Api591:
 # ========== 核心查詢引擎 ==========
 
 class AddressCommunityLookup:
-    """地址→社區名稱 查詢引擎 (CSV 版 + 591 API)"""
+    """地址→社區名稱 查詢引擎 (transactions.db + 591 API)"""
 
-    def __init__(self, enable_api: bool = True, verbose: bool = False):
+    def __init__(self, db_path: str = None, enable_api: bool = True, verbose: bool = False):
+        self.db_path = Path(db_path) if db_path else DB_PATH
         self.enable_api = enable_api
         self.verbose = verbose
-        self.data = None
-        self.indices = None
-        self.fts5_conn = None
-        self.has_fts5 = False
-        self._load_csv()
+        self.conn = None
+        self._connect_db()
 
-    def _load_csv(self):
-        """載入 CSV 資料"""
-        if not CSV_PATH.exists():
-            print(f"⚠️  CSV 不存在: {CSV_PATH}")
-            self.data = []
-            self.indices = {}
+    def _connect_db(self):
+        """連線 transactions.db"""
+        if not self.db_path.exists():
+            print(f"⚠️  資料庫不存在: {self.db_path}")
             return
 
-        print(f"📂 載入 CSV: {CSV_PATH.name}")
-        t0 = time.time()
-        self.data = []
-        with open(CSV_PATH, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                self.data.append(row)
+        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
 
-        elapsed = time.time() - t0
-        print(f"  ✅ 已載入 {len(self.data):,} 筆記錄 ({elapsed:.3f}s)")
+        # 確認記錄數
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) FROM transactions WHERE community IS NOT NULL AND community != ''"
+        )
+        count = cursor.fetchone()[0]
+        print(f"📂 已連線: {self.db_path.name}（{count:,} 筆有社區資料）")
 
-        # 建立索引
-        self._build_indices()
+    def close(self):
+        """關閉資料庫連線"""
+        if self.conn:
+            self.conn.close()
+            self.conn = None
 
-    def _build_indices(self):
-        """建立查詢索引（包含 FTS5）"""
-        print(f"📇 建立索引...")
-        self.indices = {
-            "normalized": {},
-            "to_number": defaultdict(list),
-            "to_alley": defaultdict(list),
-            "road": defaultdict(list),
-        }
+    def __del__(self):
+        self.close()
 
-        for row in self.data:
-            norm = row.get("正規化地址", "")
-            if norm:
-                self.indices["normalized"][norm] = row
-
-            to_num = row.get("到號地址", "")
-            if to_num:
-                self.indices["to_number"][to_num].append(row)
-
-            to_alley = row.get("到巷地址", "")
-            if to_alley:
-                self.indices["to_alley"][to_alley].append(row)
-
-            road = row.get("路段", "")
-            if road:
-                self.indices["road"][road].append(row)
-
-        # 嘗試建立 FTS5 索引（對 CSV 內容）
-        self._setup_fts5_csv_index()
+    def _make_search_patterns(self, addr_part: str, district: str = None, fuzzy_number: bool = False) -> list:
+        """
+        產生搜尋用的 LIKE 模式列表。
         
-        print(f"  ✅ 索引建立完成")
+        DB 地址格式: "松山區八德路四段０４４５號八樓#松山區八德路四段445號八樓"
+        - # 前面是全形數字含前導零
+        - # 後面是全形數字不含前導零
+        - 中文字是一般的漢字
+        
+        fuzzy_number: 若 True，則在 "XX號" 前加入 "%" 以匹配 "XX之Y號" 等變體
+        """
+        patterns = []
+        
+        # 處理 "之X" 變體：將 "123號" 變成 "123%號"
+        hw_part = addr_part
+        fw_part = halfwidth_to_fullwidth(addr_part)
+        
+        if fuzzy_number and re.search(r'\d+號', hw_part):
+            hw_fuzzy = re.sub(r'(\d+)號', r'\1%號', hw_part)
+            fw_fuzzy = re.sub(r'([０-９]+)號', r'\1%號', fw_part)
+        else:
+            hw_fuzzy = None
+            fw_fuzzy = None
+        
+        if district:
+            patterns.append(f"%{district}{hw_part}%")
+            patterns.append(f"%{district}{fw_part}%")
+            if hw_fuzzy:
+                patterns.append(f"%{district}{hw_fuzzy}%")
+                patterns.append(f"%{district}{fw_fuzzy}%")
+        
+        patterns.append(f"%{hw_part}%")
+        patterns.append(f"%{fw_part}%")
+        if hw_fuzzy:
+            patterns.append(f"%{hw_fuzzy}%")
+            patterns.append(f"%{fw_fuzzy}%")
+        
+        # 去重但保持順序
+        seen = set()
+        unique = []
+        for p in patterns:
+            if p not in seen:
+                seen.add(p)
+                unique.append(p)
+        return unique
 
-    def _setup_fts5_csv_index(self):
-        """為 CSV 資料建立 FTS5 虛擬索引"""
-        try:
-            import sqlite3
-            import tempfile
-            
-            # 建立臨時記憶體 DB
-            conn = sqlite3.connect(':memory:')
-            cursor = conn.cursor()
-            
-            # 建立 FTS5 表
-            cursor.execute("""
-                CREATE VIRTUAL TABLE community_fts USING fts5(
-                    address,
-                    community,
-                    tokenize = 'unicode61'
-                )
-            """)
-            
-            # 填入 CSV 資料
-            for row in self.data:
-                addr = row.get("正規化地址", "")
-                comm = row.get("社區名稱", "")
-                if addr and comm:
-                    cursor.execute(
-                        "INSERT INTO community_fts VALUES (?, ?)",
-                        (addr, comm)
-                    )
-            
-            conn.commit()
-            self.fts5_conn = conn
-            self.has_fts5 = True
-            print(f"  ✅ FTS5 CSV 索引已建立")
-        except Exception as e:
-            self.has_fts5 = False
-            if hasattr(self, 'verbose') and self.verbose:
-                print(f"  ⚠️  FTS5 setup failed: {e}")
-
-    def _query_fts5(self, norm: str) -> list:
-        """用 FTS5 查詢 CSV（模糊搜尋）"""
-        if not self.has_fts5:
+    def _query_db_exact(self, norm: str, city_code: str = None, district: str = None) -> list:
+        """Level 1: 精確地址匹配 - 在 DB 的 address 欄位中搜尋"""
+        if not self.conn:
             return []
-        
-        try:
-            cursor = self.fts5_conn.cursor()
-            # FTS5 MATCH 查詢：搜尋包含所有詞的文件
-            cursor.execute("""
-                SELECT DISTINCT community FROM community_fts 
-                WHERE address MATCH ?
-                LIMIT 10
-            """, (norm,))
+
+        # 先嘗試精確匹配，再嘗試模糊數字匹配（處理 "之X號" 變體）
+        for fuzzy in (False, True):
+            search_patterns = self._make_search_patterns(norm, district, fuzzy_number=fuzzy)
             
-            communities = [row[0] for row in cursor.fetchall()]
-            results = []
-            for comm in communities:
-                # 從原始 data 找完整記錄
-                for row in self.data:
-                    if row.get("社區名稱") == comm:
-                        results.append(row)
-                        break
-            return results
+            for pattern in search_patterns:
+                sql = """
+                    SELECT community, COUNT(*) as cnt, city, town, address
+                    FROM transactions
+                    WHERE address LIKE ? AND community IS NOT NULL AND community != ''
+                """
+                params = [pattern]
+                if city_code:
+                    sql += " AND city = ?"
+                    params.append(city_code)
+                sql += " GROUP BY community ORDER BY cnt DESC LIMIT 5"
+
+                cursor = self.conn.execute(sql, params)
+                rows = cursor.fetchall()
+                if rows:
+                    return [{"community": r["community"], "count": r["cnt"],
+                             "city_code": r["city"], "town": r["town"],
+                             "sample_address": r["address"]} for r in rows]
+        return []
+
+    def _query_db_road_number(self, road_number: str, city_code: str = None, district: str = None) -> list:
+        """Level 2: 路+門牌號匹配"""
+        if not self.conn or not road_number:
+            return []
+
+        for fuzzy in (False, True):
+            search_patterns = self._make_search_patterns(road_number, district, fuzzy_number=fuzzy)
+            for pattern in search_patterns:
+                sql = """
+                    SELECT community, COUNT(*) as cnt, city, town
+                    FROM transactions
+                    WHERE address LIKE ? AND community IS NOT NULL AND community != ''
+                """
+                params = [pattern]
+                if city_code:
+                    sql += " AND city = ?"
+                    params.append(city_code)
+                sql += " GROUP BY community ORDER BY cnt DESC LIMIT 5"
+
+                cursor = self.conn.execute(sql, params)
+                rows = cursor.fetchall()
+                if rows:
+                    return [{"community": r["community"], "count": r["cnt"],
+                             "city_code": r["city"], "town": r["town"]} for r in rows]
+        return []
+
+    def _query_db_alley(self, alley: str, city_code: str = None, district: str = None) -> list:
+        """Level 3: 巷弄匹配"""
+        if not self.conn or not alley:
+            return []
+
+        search_patterns = self._make_search_patterns(alley, district, fuzzy_number=False)
+        for pattern in search_patterns:
+            sql = """
+                SELECT community, COUNT(*) as cnt, city, town
+                FROM transactions
+                WHERE address LIKE ? AND community IS NOT NULL AND community != ''
+            """
+            params = [pattern]
+            if city_code:
+                sql += " AND city = ?"
+                params.append(city_code)
+            sql += " GROUP BY community ORDER BY cnt DESC LIMIT 5"
+
+            cursor = self.conn.execute(sql, params)
+            rows = cursor.fetchall()
+            if rows:
+                return [{"community": r["community"], "count": r["cnt"],
+                         "city_code": r["city"], "town": r["town"]} for r in rows]
+        return []
+
+    def _query_db_road(self, road: str, city_code: str = None, district: str = None) -> list:
+        """Level 4: 路段匹配"""
+        if not self.conn or not road:
+            return []
+
+        search_patterns = []
+        if district:
+            search_patterns.append(f"%{district}{road}%")
+        search_patterns.append(f"%{road}%")
+
+        for pattern in search_patterns:
+            sql = """
+                SELECT community, COUNT(*) as cnt, city, town
+                FROM transactions
+                WHERE address LIKE ? AND community IS NOT NULL AND community != ''
+            """
+            params = [pattern]
+            if city_code:
+                sql += " AND city = ?"
+                params.append(city_code)
+            sql += " GROUP BY community ORDER BY cnt DESC LIMIT 10"
+
+            cursor = self.conn.execute(sql, params)
+            rows = cursor.fetchall()
+            if rows:
+                return [{"community": r["community"], "count": r["cnt"],
+                         "city_code": r["city"], "town": r["town"]} for r in rows]
+        return []
+
+    def _get_district_from_town(self, city_code: str, town: str) -> str:
+        """從 city+town 代碼推斷區域名稱（從 DB 記錄中提取）"""
+        if not self.conn:
+            return ""
+        try:
+            cursor = self.conn.execute(
+                "SELECT address FROM transactions WHERE city=? AND town=? LIMIT 1",
+                (city_code, town)
+            )
+            row = cursor.fetchone()
+            if row:
+                addr = row["address"]
+                if "#" in addr:
+                    addr = addr.split("#", 1)[1]
+                m = re.match(r"([\u4e00-\u9fff]{1,3}[區鎮鄉市])", addr)
+                if m:
+                    return m.group(1)
         except Exception:
-            return []
-
+            pass
+        return ""
 
     def query(self, address: str, top_n: int = 5) -> dict:
-        """查詢地址對應的社區/建案名稱（支援 FTS5）"""
+        """查詢地址對應的社區/建案名稱"""
         norm = normalize_address(address)
         input_district = extract_district(address)
         input_city = infer_city(address)
+        city_code = get_city_code(address)
         results = []
 
         if self.verbose:
             print(f"  🔍 查詢: {address}")
             print(f"     正規化: {norm}")
             if input_city:
-                print(f"     城市: {input_city}")
+                print(f"     城市: {input_city} ({city_code})")
             if input_district:
                 print(f"     區域: {input_district}")
 
-        if self.data:
+        if self.conn:
             # Level 1: 完整地址精確匹配
-            if norm in self.indices["normalized"]:
-                row = self.indices["normalized"][norm]
-                results.append({
-                    "community": row["社區名稱"],
-                    "confidence": 98,
-                    "match_level": "完整地址精確匹配",
-                    "district": row["鄉鎮市區"],
-                    "source": row["資料來源"],
-                    "count": int(row["交易筆數"]) if row["交易筆數"] else 0,
-                })
+            db_results = self._query_db_exact(norm, city_code, input_district)
+            if db_results:
+                for r in db_results:
+                    district = input_district or self._get_district_from_town(r["city_code"], r["town"])
+                    results.append({
+                        "community": r["community"],
+                        "confidence": 98,
+                        "match_level": "完整地址精確匹配",
+                        "district": district,
+                        "source": "transactions.db",
+                        "count": r["count"],
+                    })
                 if self.verbose:
-                    print(f"     ✅ Level 1: {row['社區名稱']}")
+                    print(f"     ✅ Level 1: {results[0]['community']} ({results[0]['count']}筆)")
 
             # Level 2: 門牌號匹配
             if not results or results[0]["confidence"] < 80:
                 to_num = extract_road_number(norm)
-                if to_num in self.indices["to_number"]:
-                    seen = set()
-                    for row in self.indices["to_number"][to_num][:3]:
-                        comm = row["社區名稱"]
-                        if comm not in seen:
-                            results.append({
-                                "community": comm,
-                                "confidence": 90,
-                                "match_level": "門牌號匹配",
-                                "district": row["鄉鎮市區"],
-                                "source": row["資料來源"],
-                                "count": int(row["交易筆數"]) if row["交易筆數"] else 0,
-                            })
-                            seen.add(comm)
-                    if self.verbose and results:
-                        print(f"     ✅ Level 2: {results[-1]['community']}")
+                db_results = self._query_db_road_number(to_num, city_code, input_district)
+                if db_results:
+                    for r in db_results:
+                        district = input_district or self._get_district_from_town(r["city_code"], r["town"])
+                        results.append({
+                            "community": r["community"],
+                            "confidence": 90,
+                            "match_level": "門牌號匹配",
+                            "district": district,
+                            "source": "transactions.db",
+                            "count": r["count"],
+                        })
+                    if self.verbose:
+                        print(f"     ✅ Level 2: {db_results[0]['community']} ({db_results[0]['count']}筆)")
 
             # Level 3: 巷弄匹配
             if not results or all(r["confidence"] < 70 for r in results):
                 to_alley = extract_road_alley(norm)
-                if to_alley and to_alley in self.indices["to_alley"]:
-                    seen = set()
-                    for row in self.indices["to_alley"][to_alley][:3]:
-                        comm = row["社區名稱"]
-                        if comm not in seen:
+                if to_alley:
+                    db_results = self._query_db_alley(to_alley, city_code, input_district)
+                    if db_results:
+                        for r in db_results:
+                            district = input_district or self._get_district_from_town(r["city_code"], r["town"])
                             results.append({
-                                "community": comm,
+                                "community": r["community"],
                                 "confidence": 72,
                                 "match_level": "巷弄匹配",
-                                "district": row["鄉鎮市區"],
-                                "source": row["資料來源"],
-                                "count": int(row["交易筆數"]) if row["交易筆數"] else 0,
+                                "district": district,
+                                "source": "transactions.db",
+                                "count": r["count"],
                             })
-                            seen.add(comm)
-                    if self.verbose and results:
-                        print(f"     ✅ Level 3: {results[-1]['community']}")
+                        if self.verbose:
+                            print(f"     ✅ Level 3: {db_results[0]['community']} ({db_results[0]['count']}筆)")
 
             # Level 4: 路段匹配
             if not results or all(r["confidence"] < 50 for r in results):
                 road = extract_road(norm)
-                if road and road in self.indices["road"]:
-                    seen = set()
-                    for row in self.indices["road"][road][:5]:
-                        comm = row["社區名稱"]
-                        if comm not in seen:
+                if road:
+                    db_results = self._query_db_road(road, city_code, input_district)
+                    if db_results:
+                        for r in db_results:
+                            district = input_district or self._get_district_from_town(r["city_code"], r["town"])
                             results.append({
-                                "community": comm,
+                                "community": r["community"],
                                 "confidence": 40,
                                 "match_level": "路段匹配",
-                                "district": row["鄉鎮市區"],
-                                "source": row["資料來源"],
-                                "count": int(row["交易筆數"]) if row["交易筆數"] else 0,
+                                "district": district,
+                                "source": "transactions.db",
+                                "count": r["count"],
                             })
-                            seen.add(comm)
-                    if self.verbose and results:
-                        print(f"     ✅ Level 4: {results[-1]['community']}")
+                        if self.verbose:
+                            print(f"     ✅ Level 4: {db_results[0]['community']} ({db_results[0]['count']}筆)")
 
-
-        # Level 5: FTS5 模糊搜尋（新增）
-        if not results or all(r["confidence"] < 30 for r in results):
-            if self.has_fts5:
-                fts_results = self._query_fts5(norm)
-                if fts_results:
-                    seen = set()
-                    for row in fts_results[:5]:
-                        comm = row.get("社區名稱")
-                        if comm and comm not in seen:
-                            results.append({
-                                "community": comm,
-                                "confidence": 55,
-                                "match_level": "FTS5 模糊搜尋",
-                                "district": row.get("鄉鎮市區", ""),
-                                "source": row.get("資料來源", ""),
-                                "count": int(row.get("交易筆數", 0)) if row.get("交易筆數") else 0,
-                            })
-                            seen.add(comm)
-                    if self.verbose and results:
-                        print(f"     ✅ Level 5 FTS5: {results[-1]['community']}")
-
-        # Level 6: 591 API 線上查詢
+        # Level 5: 591 API 線上查詢
         if self.enable_api and (not results or all(r["confidence"] < 70 for r in results)):
             api_results = self._query_591_api(address, norm)
             if api_results:
@@ -563,7 +652,7 @@ class AddressCommunityLookup:
         # 去重、排序
         seen = set()
         unique_results = []
-        for r in sorted(results, key=lambda x: -x["confidence"]):
+        for r in sorted(results, key=lambda x: (-x["confidence"], -x.get("count", 0))):
             if r["community"] not in seen:
                 seen.add(r["community"])
                 unique_results.append(r)
@@ -591,12 +680,7 @@ class AddressCommunityLookup:
             if name:
                 if self.verbose:
                     print(f"     ✅ 591 API: {name}")
-                
-                # 自動保存到 CSV（信心度 >= 80）
                 district = result.get("section", "")
-                city = infer_city(original_addr)
-                self._save_to_csv(norm, name, city, district, 0, "591_API")
-                
                 return [{
                     "community": name,
                     "confidence": 88,
@@ -627,78 +711,22 @@ class AddressCommunityLookup:
 
         return []
 
-    def add_manual_mapping(self, address: str, community: str, district: str = ""):
-        """新增手動對照"""
-        norm = normalize_address(address)
-        city = infer_city(address)
-
-        file_exists = MANUAL_CSV.exists()
-        with open(MANUAL_CSV, "a", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f)
-            if not file_exists:
-                writer.writerow(["地址", "社區名稱", "鄉鎮市區", "備註"])
-            writer.writerow([address, community, district, "手動新增"])
-
-        print(f"  ✅ 已新增: {address} → {community}")
-        # 同步更新內存資料
-        self._load_csv()
-
-    def _save_to_csv(self, norm: str, community: str, city: str, district: str, 
-                     transaction_count: int, source: str):
-        """將查詢結果保存到 CSV（避免重複）"""
-        # 檢查是否已存在
-        if any(r.get("正規化地址") == norm for r in self.data):
-            return
-        
-        try:
-            # 準備新行
-            new_row = {
-                "正規化地址": norm,
-                "到號地址": extract_road_number(norm),
-                "到巷地址": extract_road_alley(norm),
-                "路段": extract_road(norm),
-                "社區名稱": community,
-                "縣市": city,
-                "鄉鎮市區": district,
-                "交易筆數": transaction_count,
-                "資料來源": source,
-                "所有建案名": community,
-            }
-            
-            # 追加到 CSV
-            with open(CSV_PATH, "a", encoding="utf-8", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=[
-                    "正規化地址", "到號地址", "到巷地址", "路段",
-                    "社區名稱", "縣市", "鄉鎮市區", "交易筆數",
-                    "資料來源", "所有建案名"
-                ])
-                writer.writerow(new_row)
-            
-            # 同步更新內存（加入 data 和索引）
-            self.data.append(new_row)
-            self.indices["normalized"][norm] = new_row
-            
-            if new_row["到號地址"]:
-                self.indices["to_number"][new_row["到號地址"]].append(new_row)
-            if new_row["到巷地址"]:
-                self.indices["to_alley"][new_row["到巷地址"]].append(new_row)
-            if new_row["路段"]:
-                self.indices["road"][new_row["路段"]].append(new_row)
-                
-        except Exception as e:
-            if self.verbose:
-                print(f"     ⚠️  保存到 CSV 失敗: {e}")
-
-
     def batch_query(self, addresses: list) -> list:
         return [self.query(addr) for addr in addresses]
 
     def stats(self) -> dict:
         """取得統計"""
-        return {
-            "total_records": len(self.data),
-            "unique_communities": len(set(r["社區名稱"] for r in self.data)),
-        }
+        if not self.conn:
+            return {"total_records": 0, "unique_communities": 0}
+        cursor = self.conn.execute(
+            "SELECT COUNT(*) FROM transactions WHERE community IS NOT NULL AND community != ''"
+        )
+        total = cursor.fetchone()[0]
+        cursor = self.conn.execute(
+            "SELECT COUNT(DISTINCT community) FROM transactions WHERE community IS NOT NULL AND community != ''"
+        )
+        unique = cursor.fetchone()[0]
+        return {"total_records": total, "unique_communities": unique}
 
 
 # ========== 便利函式 ==========
@@ -733,31 +761,33 @@ def print_result(result: dict, show_detail: bool = False):
         print(f"\n📍 {addr}")
         print(f"   → 🏘️  {best}")
         print(f"   信心度: [{bar}] {top['confidence']}%")
-        print(f"   匹配: {top['match_level']}")
+        print(f"   匹配: {top['match_level']} (來源: {top['source']})")
         if top["district"]:
             print(f"   區域: {top['district']}")
+        if top.get("count"):
+            print(f"   交易筆數: {top['count']}")
 
         if show_detail and len(result["results"]) > 1:
             print(f"\n   其他候選：")
             for r in result["results"][1:]:
-                print(f"   • {r['community']} ({r['confidence']}%, {r['match_level']})")
+                extra = f", {r['count']}筆" if r.get("count") else ""
+                print(f"   • {r['community']} ({r['confidence']}%, {r['match_level']}{extra})")
     else:
         print(f"\n📍 {addr}")
         print(f"   → ❓ 未找到")
         print(f"   正規化: {result['normalized']}")
-        print(f"   💡 可用 --add '地址' '社區名' 手動新增")
 
 
 def interactive_mode(lookup_engine: AddressCommunityLookup):
     """互動模式"""
     stats = lookup_engine.stats()
     print("=" * 60)
-    print("🏘️  地址→社區名稱 查詢工具 (v2 - CSV + 591 API)")
+    print("🏘️  地址→社區名稱 查詢工具 (transactions.db + 591 API)")
     print("=" * 60)
     print(f"📊 本地資料: {stats.get('total_records', 0):,} 筆 | "
           f"社區: {stats.get('unique_communities', 0):,}")
     print("-" * 60)
-    print("輸入地址查詢，'q' 退出，'add' 新增，'detail' 詳細模式")
+    print("輸入地址查詢，'q' 退出，'detail' 詳細模式")
     print("-" * 60)
 
     show_detail = False
@@ -782,18 +812,6 @@ def interactive_mode(lookup_engine: AddressCommunityLookup):
             s = lookup_engine.stats()
             print(f"   記錄: {s['total_records']:,} | 社區: {s['unique_communities']:,}")
             continue
-        if addr.lower() == "add":
-            try:
-                a = input("   地址: ").strip()
-                c = input("   社區名稱: ").strip()
-                d = input("   鄉鎮市區(可空): ").strip()
-                if a and c:
-                    lookup_engine.add_manual_mapping(a, c, d)
-                else:
-                    print("   ❌ 地址和社區名稱不可為空")
-            except (EOFError, KeyboardInterrupt):
-                print()
-            continue
 
         t0 = time.time()
         result = lookup_engine.query(addr)
@@ -805,7 +823,7 @@ def interactive_mode(lookup_engine: AddressCommunityLookup):
 def main():
     import argparse
     parser = argparse.ArgumentParser(
-        description="地址→社區/建案名稱 查詢工具",
+        description="地址→社區/建案名稱 查詢工具 (transactions.db + 591 API)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用範例：
@@ -813,7 +831,6 @@ def main():
   python3 address2community.py "仁愛路三段53號E棟"
   python3 address2community.py --batch addresses.txt
   python3 address2community.py --no-api "三民路29巷5號"
-  python3 address2community.py --add "延壽街332號" "平安新城甲區"
         """,
     )
     parser.add_argument("address", nargs="*", help="查詢地址")
@@ -822,21 +839,15 @@ def main():
     parser.add_argument("--no-api", action="store_true", help="停用 591 API")
     parser.add_argument("--verbose", "-v", action="store_true", help="顯示詳細過程")
     parser.add_argument("--json", "-j", action="store_true", help="JSON 輸出")
-    parser.add_argument(
-        "--add", nargs=2, metavar=("ADDR", "COMMUNITY"),
-        help="新增手動對照",
-    )
+    parser.add_argument("--db", help="指定 transactions.db 路徑")
 
     args = parser.parse_args()
 
     engine = AddressCommunityLookup(
+        db_path=args.db,
         enable_api=not args.no_api,
         verbose=args.verbose,
     )
-
-    if args.add:
-        engine.add_manual_mapping(args.add[0], args.add[1])
-        return
 
     if args.batch:
         with open(args.batch, "r", encoding="utf-8") as f:
