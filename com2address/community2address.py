@@ -7,9 +7,9 @@ community2address.py - 社區/建案名稱→地址範圍 查詢工具
   - 例如: 健安新城F區 → 三民路29巷1、3、5、7號
 
 資料來源：
-  1. address_community_mapping.csv (address2com 建立的對照表)
-  2. ALL_lvr_land_b.csv (B表，建案交易紀錄)
-  3. manual_mapping.csv (手動新增的對照)
+  1. land_data.db (SQLite 資料庫，含 land_transaction 表)
+  2. manual_mapping.csv (手動新增的對照)
+  3. 591.com.tw API（線上備援）
 
 使用方式：
   1. 命令列：  python3 community2address.py "健安新城F區"
@@ -22,28 +22,20 @@ community2address.py - 社區/建案名稱→地址範圍 查詢工具
 import csv
 import json
 import re
+import sqlite3
 import sys
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from collections import defaultdict
-
-# ========== 591 API 集成（可選） ==========
-try:
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("api591", str(Path(__file__).parent / "591_api_integration.py"))
-    api591_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(api591_module)
-    HybridLookup = api591_module.HybridLookup
-    HAS_591 = True
-except Exception:
-    HAS_591 = False
+from typing import Optional, Dict, List
 
 # ========== 路徑設定 ==========
 SCRIPT_DIR = Path(__file__).parent
 LAND_DIR = SCRIPT_DIR.parent
-ADDRESS2COM_CSV = LAND_DIR / "db" / "address_community_mapping.csv"
+DB_PATH = LAND_DIR / "db" / "land_data.db"
 MANUAL_CSV = LAND_DIR / "db" / "manual_mapping.csv"
-B_TABLE_CSV = LAND_DIR / "db" / "ALL_lvr_land_b.csv"
 
 # ========== 全形半形轉換 ==========
 FULLWIDTH_DIGITS = "０１２３４５６７８９"
@@ -230,26 +222,155 @@ def format_address_range(addresses: list, raw_addresses: list = None) -> dict:
     }
 
 
+# ========== 591 API 客戶端 ==========
+
+CITY_TO_591_REGION = {
+    "臺北市": 1,  "台北市": 1,
+    "基隆市": 2,  "新北市": 3,
+    "新竹市": 4,  "新竹縣": 5,
+    "桃園市": 6,  "桃園縣": 6,
+    "苗栗縣": 7,  "臺中市": 8,
+    "台中市": 8,  "彰化縣": 10,
+    "南投縣": 11, "嘉義市": 12,
+    "嘉義縣": 13, "雲林縣": 14,
+    "臺南市": 15, "台南市": 15,
+    "高雄市": 17, "屏東縣": 19,
+    "宜蘭縣": 21, "臺東縣": 22,
+    "台東縣": 22, "花蓮縣": 23,
+    "澎湖縣": 24, "金門縣": 25,
+}
+
+DEFAULT_REGION_ORDER = [1, 3, 6, 8, 15, 17, 5, 4, 10, 21, 19]
+
+
+class Api591Client:
+    """591.com.tw 社區搜尋 API 客戶端（使用標準庫 urllib）"""
+
+    BASE_URL = "https://bff.591.com.tw"
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+        "Accept": "application/json",
+        "Referer": "https://community.591.com.tw/",
+    }
+
+    def __init__(self, cache_dir: str = None, timeout: int = 8):
+        self.timeout = timeout
+        self.cache_dir = Path(cache_dir or "/tmp/591_cache")
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def search_community(self, keyword: str, regionid: int) -> List[Dict]:
+        """搜尋社區/建案名稱"""
+        safe_key = keyword.replace("/", "_").replace("\\", "_")
+        cache_key = f"{regionid}_{safe_key}"
+        cached = self._get_cache(cache_key)
+        if cached is not None:
+            return cached
+
+        params = urllib.parse.urlencode({"keyword": keyword, "regionid": regionid})
+        url = f"{self.BASE_URL}/v1/community/search/match?{params}"
+
+        try:
+            req = urllib.request.Request(url, headers=self.HEADERS)
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                data = json.loads(r.read().decode("utf-8"))
+                if data.get("status") == 1:
+                    items = data.get("data", {}).get("items", [])
+                    result = [item for item in items if item.get("name")]
+                    self._save_cache(cache_key, result)
+                    return result
+        except Exception:
+            pass
+
+        self._save_cache(cache_key, [])
+        return []
+
+    def search_by_name(self, community_name: str,
+                       regionids: List[int] = None) -> Optional[Dict]:
+        """用建案名稱搜尋，回傳最佳匹配"""
+        if not regionids:
+            regionids = DEFAULT_REGION_ORDER
+
+        for rid in regionids:
+            items = self.search_community(community_name, rid)
+            if not items:
+                continue
+            best = self._best_match(items, community_name)
+            if best:
+                return best
+            time.sleep(0.1)
+
+        return None
+
+    @staticmethod
+    def _best_match(items: List[Dict], query: str) -> Optional[Dict]:
+        """從搜尋結果中選出最佳匹配"""
+        if not items:
+            return None
+
+        best = None
+        best_score = -1
+
+        for item in items:
+            name = item.get("name", "")
+            if not name:
+                continue
+            score = 0
+            if name == query:
+                score = 100
+            elif query in name:
+                score = 80 + len(query) * 2
+            elif name in query:
+                score = 70
+            else:
+                common = sum(1 for c in query if c in name)
+                if common:
+                    score = int(common / max(len(query), 1) * 40)
+
+            if score > best_score:
+                best_score = score
+                best = item
+
+        return best if best_score >= 20 else None
+
+    def _get_cache(self, key: str) -> Optional[List]:
+        cache_file = self.cache_dir / f"{key}.json"
+        if cache_file.exists():
+            try:
+                with open(cache_file, encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return None
+
+    def _save_cache(self, key: str, data):
+        cache_file = self.cache_dir / f"{key}.json"
+        try:
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+        except Exception:
+            pass
+
+
 # ========== 核心查詢引擎 ==========
 
 class Community2AddressLookup:
-    """社區/建案名稱→地址範圍 查詢引擎"""
+    """社區/建案名稱→地址範圍 查詢引擎（SQLite + 591 API）"""
 
     def __init__(self, verbose: bool = False, use_591: bool = True):
         """
         初始化查詢引擎
-        
+
         Args:
             verbose: 是否顯示詳細過程
             use_591: 是否啟用 591 API 補充（本地找不到時自動呼叫）
         """
         self.verbose = verbose
-        self.use_591 = use_591 and HAS_591
-        
-        # 建案名稱→地址列表 (來源: address2com CSV)
-        self._com_to_addr_csv = defaultdict(list)
-        # 建案名稱→地址列表 (來源: B表)
-        self._com_to_addr_b = defaultdict(list)
+        self.use_591 = use_591
+
+        # 建案名稱→地址列表 (來源: land_data.db)
+        self._com_to_addr_db = defaultdict(list)
+        # 建案名稱→地址列表 (來源: manual_mapping.csv)
+        self._com_to_addr_manual = defaultdict(list)
         # 建案名稱→區域資訊
         self._com_info = {}
         # 所有建案名稱（正規化）
@@ -265,67 +386,59 @@ class Community2AddressLookup:
     def _load_data(self):
         """載入所有資料"""
         t0 = time.time()
-        self._load_address2com_csv()
+        self._load_from_db()
         self._load_manual_csv()
-        self._load_b_table()
         elapsed = time.time() - t0
 
         total_communities = len(self._all_names)
         print(f"  ✅ com2address: 已索引 {total_communities:,} 個建案 ({elapsed:.2f}s)")
 
-    def _load_address2com_csv(self):
-        """從 address_community_mapping.csv 載入"""
-        if not ADDRESS2COM_CSV.exists():
-            print(f"⚠️  CSV 不存在: {ADDRESS2COM_CSV}")
+    def _load_from_db(self):
+        """從 land_data.db 載入建案名稱→地址映射"""
+        if not DB_PATH.exists():
+            print(f"⚠️  資料庫不存在: {DB_PATH}")
             return
 
-        print(f"📂 載入 address2com CSV (反向索引)...")
-        count = 0
-        with open(ADDRESS2COM_CSV, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                community = row.get('社區名稱', '').strip()
-                norm_addr = row.get('正規化地址', '').strip()
-                district = row.get('鄉鎮市區', '').strip()
-                city = row.get('縣市', '').strip()
-                all_names = row.get('所有建案名', '').strip()
+        print(f"📂 載入 land_data.db (建案→地址)...")
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            cursor = conn.execute("""
+                SELECT community_name, address, district, county_city,
+                       COUNT(*) as tx_count
+                FROM land_transaction
+                WHERE community_name IS NOT NULL AND community_name != ''
+                  AND address IS NOT NULL AND address != ''
+                GROUP BY community_name, address, district, county_city
+            """)
 
-                if not community:
+            count = 0
+            for community, addr, district, city, tx_count in cursor:
+                community = community.strip()
+                addr = addr.strip()
+                district = (district or '').strip()
+                city = (city or '').strip()
+
+                if not community or not addr:
                     continue
 
                 norm_name = normalize_community_name(community)
+                self._com_to_addr_db[norm_name].append(addr)
+                self._all_names.add(norm_name)
+                self._norm_to_original.setdefault(norm_name, community)
 
-                if norm_addr:
-                    self._com_to_addr_csv[norm_name].append(norm_addr)
-
-                # 記錄區域資訊
                 if norm_name not in self._com_info:
                     self._com_info[norm_name] = {
                         'district': district,
                         'city': city,
-                        'source': row.get('資料來源', ''),
+                        'source': 'land_data.db',
                         'tx_count': 0,
                     }
-                tx = int(row.get('交易筆數', 0) or 0)
-                self._com_info[norm_name]['tx_count'] += tx
-
-                self._all_names.add(norm_name)
-                self._norm_to_original[norm_name] = community
-
-                # 如果 "所有建案名" 包含多個名稱
-                if all_names and ',' in all_names:
-                    for name in all_names.split(','):
-                        name = name.strip()
-                        if name:
-                            nn = normalize_community_name(name)
-                            if norm_addr:
-                                self._com_to_addr_csv[nn].append(norm_addr)
-                            self._all_names.add(nn)
-                            self._norm_to_original.setdefault(nn, name)
-
+                self._com_info[norm_name]['tx_count'] += tx_count
                 count += 1
 
-        print(f"  ✅ CSV: {count:,} 筆記錄")
+            print(f"  ✅ DB: {count:,} 筆記錄, {len(self._all_names):,} 個建案")
+        finally:
+            conn.close()
 
     def _load_manual_csv(self):
         """從 manual_mapping.csv 載入"""
@@ -343,7 +456,7 @@ class Community2AddressLookup:
                     continue
 
                 norm_name = normalize_community_name(community)
-                self._com_to_addr_csv[norm_name].append(addr)
+                self._com_to_addr_manual[norm_name].append(addr)
                 self._all_names.add(norm_name)
                 self._norm_to_original.setdefault(norm_name, community)
                 if norm_name not in self._com_info:
@@ -353,42 +466,6 @@ class Community2AddressLookup:
                         'source': '手動',
                         'tx_count': 0,
                     }
-
-    def _load_b_table(self):
-        """從 ALL_lvr_land_b.csv 載入建案名稱→地址映射"""
-        if not B_TABLE_CSV.exists():
-            print(f"⚠️  B表 CSV 不存在: {B_TABLE_CSV}")
-            return
-
-        print(f"📂 載入 B表 CSV (建案→地址)...")
-        count = 0
-        with open(B_TABLE_CSV, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                community = row.get('建案名稱', '').strip()
-                addr = row.get('土地位置建物門牌', '').strip()
-                district = row.get('鄉鎮市區', '').strip()
-
-                if not community or not addr:
-                    continue
-
-                norm_name = normalize_community_name(community)
-                self._com_to_addr_b[norm_name].append(addr)
-                self._all_names.add(norm_name)
-                self._norm_to_original.setdefault(norm_name, community)
-
-                if norm_name not in self._com_info:
-                    self._com_info[norm_name] = {
-                        'district': district,
-                        'city': '',
-                        'source': 'B表',
-                        'tx_count': 0,
-                    }
-                self._com_info[norm_name]['tx_count'] += 1
-
-                count += 1
-
-        print(f"  ✅ B表: {count:,} 筆記錄")
 
     def _fuzzy_match(self, keyword: str, top_n: int = 10) -> list:
         """模糊匹配建案名稱"""
@@ -455,11 +532,11 @@ class Community2AddressLookup:
         city = ''
 
         # === 第 1 層：本地精確匹配 ===
-        if norm_name in self._com_to_addr_csv or norm_name in self._com_to_addr_b:
+        if norm_name in self._com_to_addr_db or norm_name in self._com_to_addr_manual:
             match_type = "精確匹配"
-            csv_addrs = self._com_to_addr_csv.get(norm_name, [])
-            b_addrs = self._com_to_addr_b.get(norm_name, [])
-            raw_addresses = list(set(csv_addrs + b_addrs))
+            db_addrs = self._com_to_addr_db.get(norm_name, [])
+            manual_addrs = self._com_to_addr_manual.get(norm_name, [])
+            raw_addresses = list(set(db_addrs + manual_addrs))
             addresses = raw_addresses
             if self.verbose:
                 print(f"     ✅ Level 1: 精確匹配, {len(addresses)} 個地址")
@@ -471,9 +548,9 @@ class Community2AddressLookup:
                 best = fuzzy_results[0]
                 matched_name = best['norm_name']
                 match_type = f"模糊匹配 ({best['score']}%)"
-                csv_addrs = self._com_to_addr_csv.get(matched_name, [])
-                b_addrs = self._com_to_addr_b.get(matched_name, [])
-                raw_addresses = list(set(csv_addrs + b_addrs))
+                db_addrs = self._com_to_addr_db.get(matched_name, [])
+                manual_addrs = self._com_to_addr_manual.get(matched_name, [])
+                raw_addresses = list(set(db_addrs + manual_addrs))
                 addresses = raw_addresses
                 if self.verbose:
                     print(f"     ✅ Level 2: 模糊匹配 {best['name']} ({best['score']}%)")
@@ -495,14 +572,19 @@ class Community2AddressLookup:
                 self._persist_591_result(community_name, api_result)
 
         # === 格式化 ===
+        # 用 DB 擴展地址（從代表地址找出同社區所有門牌號）
         unique_addrs = list(set(addresses))
-        address_range = format_address_range(unique_addrs, raw_addresses)
-
         info = self._com_info.get(matched_name, {})
         if not district:
             district = info.get('district', '')
         if not city:
             city = info.get('city', '')
+        expanded = self._expand_addresses_from_db(unique_addrs, district)
+        if expanded:
+            unique_addrs = expanded
+            if self.verbose:
+                print(f"     📍 DB 擴展: {len(addresses)} → {len(unique_addrs)} 個地址")
+        address_range = format_address_range(unique_addrs, raw_addresses or unique_addrs)
 
         candidates = self._fuzzy_match(norm_name, top_n=top_n)
 
@@ -518,24 +600,107 @@ class Community2AddressLookup:
             'found': match_type is not None,
         }
 
+    def _expand_addresses_from_db(self, addresses: list, district: str = '') -> list:
+        """
+        從代表地址擴展出同社區的所有門牌號。
+
+        策略：
+        1. 解析代表地址取得 street + lane + district
+        2. 在 DB 中找該地址的 total_floors 和 build_date
+        3. 找出同 street+lane+district+total_floors+build_date 的所有門牌號
+        """
+        if not addresses or not DB_PATH.exists():
+            return []
+
+        expanded = set()
+        conn = sqlite3.connect(str(DB_PATH))
+        try:
+            for addr in addresses:
+                s = fullwidth_to_halfwidth(str(addr).strip())
+
+                # 去除縣市
+                for c in CITIES:
+                    if s.startswith(c):
+                        s = s[len(c):]
+                        break
+                # 去除鄉鎮市區
+                s = re.sub(r'^[\u4e00-\u9fff]{1,3}[區鎮鄉市]', '', s)
+
+                # 解析 street (路/街/大道) 和 lane (巷)
+                m = re.search(r'([一-鿿]+?(?:路|街|大道)(?:[一二三四五六七八九十]+段)?)', s)
+                if not m:
+                    expanded.add(addr)
+                    continue
+                street = m.group(1)
+                lane_m = re.search(r'(\d+)巷', s)
+                lane = lane_m.group(1) if lane_m else ''
+
+                # 門牌號
+                num_m = re.search(r'(\d+)號', s)
+                if not num_m:
+                    expanded.add(addr)
+                    continue
+                ref_number = num_m.group(1)
+
+                # 找 district（若未提供，從原始地址解析）
+                addr_district = district
+                if not addr_district:
+                    raw = fullwidth_to_halfwidth(str(addr).strip())
+                    for c in CITIES:
+                        if raw.startswith(c):
+                            raw = raw[len(c):]
+                            dm = re.match(r'([\u4e00-\u9fff]{1,3}[區鎮鄉市])', raw)
+                            if dm:
+                                addr_district = dm.group(1)
+                            break
+
+                if not addr_district:
+                    expanded.add(addr)
+                    continue
+
+                # 從 DB 取得代表地址的建物特徵
+                rows = conn.execute("""
+                    SELECT total_floors, build_date FROM land_transaction
+                    WHERE street=? AND lane=? AND number=? AND district=?
+                    LIMIT 1
+                """, (street, lane, ref_number, addr_district)).fetchall()
+
+                if not rows:
+                    expanded.add(addr)
+                    continue
+
+                total_floors, build_date = rows[0]
+
+                # 找同社區所有門牌號
+                all_numbers = conn.execute("""
+                    SELECT DISTINCT CAST(number AS INTEGER) as num
+                    FROM land_transaction
+                    WHERE street=? AND lane=? AND district=?
+                      AND total_floors=? AND build_date=?
+                      AND number IS NOT NULL AND number != ''
+                    ORDER BY num
+                """, (street, lane, addr_district,
+                      total_floors, build_date)).fetchall()
+
+                if all_numbers:
+                    road = street + (f"{lane}巷" if lane else "")
+                    for (num,) in all_numbers:
+                        expanded.add(f"{road}{num}號")
+                else:
+                    expanded.add(addr)
+        finally:
+            conn.close()
+
+        return list(expanded) if expanded else []
+
     def _query_591_fallback(self, community_name: str) -> dict:
         """
         591 API 備援查詢（本地完全找不到時呼叫）
         回傳 {name, addresses, district} 或 None
         """
-        if not HAS_591:
-            return None
         try:
-            # 延遲初始化 Api591Client
             if self._api591 is None:
-                import importlib.util as _iu
-                spec = _iu.spec_from_file_location(
-                    "api591",
-                    str(SCRIPT_DIR / "591_api_integration.py")
-                )
-                mod = _iu.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                self._api591 = mod.Api591Client()
+                self._api591 = Api591Client()
 
             item = self._api591.search_by_name(community_name)
             if item:
@@ -562,8 +727,8 @@ class Community2AddressLookup:
 
         # 更新記憶體
         for addr in addresses:
-            if addr not in self._com_to_addr_csv[norm]:
-                self._com_to_addr_csv[norm].append(addr)
+            if addr not in self._com_to_addr_manual[norm]:
+                self._com_to_addr_manual[norm].append(addr)
         self._all_names.add(norm)
         self._norm_to_original.setdefault(norm, name)
         if norm not in self._com_info:
@@ -594,8 +759,8 @@ class Community2AddressLookup:
         """統計資訊"""
         return {
             'total_communities': len(self._all_names),
-            'csv_communities': len(self._com_to_addr_csv),
-            'b_table_communities': len(self._com_to_addr_b),
+            'db_communities': len(self._com_to_addr_db),
+            'manual_communities': len(self._com_to_addr_manual),
         }
 
 

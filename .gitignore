@@ -30,7 +30,7 @@ Thumbs.db
 ALL_lvr_land_a.csv
 ALL_lvr_land_b.csv
 *.db
-*.db.bak*
+*.db.*
 *.duckdb
 *.sqlite
 geocode_cache.json

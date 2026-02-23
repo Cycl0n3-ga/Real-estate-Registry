@@ -3,11 +3,11 @@
 address2community.py - 地址→社區/建案名稱 查詢工具 (SQLite + 591 API 版)
 
 資料來源：
-  1. transactions.db - 內政部實價登錄交易資料庫（約 180 萬筆有社區名稱）
+  1. land_data.db   - 內政部實價登錄交易資料庫（已匹配社區名稱 ~10 萬筆）
   2. 591 即時 API   - 本地查不到時自動呼叫 591 線上查詢
 
 特色：
-  - SQLite 直查：無需預先建 CSV，直接查 transactions.db
+  - SQLite 直查：利用 land_data.db 的解析地址欄位（district、address）快速查詢
   - 591 即時 API：本地查不到時自動呼叫 591 線上查詢
   - 多層匹配：精確地址 → 門牌號 → 巷弄 → 路段 → 591 API
 
@@ -16,7 +16,7 @@ address2community.py - 地址→社區/建案名稱 查詢工具 (SQLite + 591 A
   2. 互動：    python3 address2community.py
   3. 批次：    python3 address2community.py --batch input.txt
   4. 模組：    from address2community import lookup
-              result = lookup("三民路29巷5號")
+              result = lookup("三民路29巷6號")
 """
 
 import json
@@ -31,7 +31,7 @@ from collections import defaultdict
 
 # ========== 路徑設定 ==========
 SCRIPT_DIR = Path(__file__).parent
-DB_PATH = SCRIPT_DIR.parent / "db" / "transactions.db"
+DB_PATH = SCRIPT_DIR.parent / "db" / "land_data.db"
 
 # ========== 全形半形轉換 ==========
 FULLWIDTH_DIGITS = "０１２３４５６７８９"
@@ -49,19 +49,25 @@ def halfwidth_to_fullwidth(s: str) -> str:
 
 
 # ========== 城市代碼對照 ==========
-CITY_CODE_TO_NAME = {
-    "A": "臺北市", "B": "臺中市", "C": "基隆市", "D": "臺南市",
-    "E": "高雄市", "F": "新北市", "G": "宜蘭縣", "H": "桃園市",
-    "I": "嘉義市", "J": "新竹縣", "K": "苗栗縣", "M": "南投縣",
-    "N": "彰化縣", "O": "新竹市", "P": "雲林縣", "Q": "嘉義縣",
-    "T": "屏東縣", "U": "花蓮縣", "V": "臺東縣", "W": "金門縣",
-    "X": "澎湖縣", "Z": "連江縣",
+# land_data.db 的 county_city 欄位值（使用台，非臺）
+CITY_NORMALIZE = {
+    "台北市": "台北市", "臺北市": "台北市",
+    "台中市": "台中市", "臺中市": "台中市",
+    "台南市": "台南市", "臺南市": "台南市",
+    "台東縣": "台東縣", "臺東縣": "台東縣",
+    "新北市": "新北市", "桃園市": "桃園市", "高雄市": "高雄市",
+    "基隆市": "基隆市", "新竹市": "新竹市", "新竹縣": "新竹縣",
+    "苗栗縣": "苗栗縣", "彰化縣": "彰化縣", "南投縣": "南投縣",
+    "雲林縣": "雲林縣", "嘉義市": "嘉義市", "嘉義縣": "嘉義縣",
+    "屏東縣": "屏東縣", "宜蘭縣": "宜蘭縣", "花蓮縣": "花蓮縣",
+    "澎湖縣": "澎湖縣", "金門縣": "金門縣", "連江縣": "連江縣",
 }
-CITY_NAME_TO_CODE = {v: k for k, v in CITY_CODE_TO_NAME.items()}
-# 加入台→臺的對照
-CITY_NAME_TO_CODE.update({
-    "台北市": "A", "台中市": "B", "台南市": "D", "台東縣": "V",
-})
+
+def normalize_city_name(city: str) -> str:
+    """將縣市名正規化為 land_data.db 的格式（台/臺統一用台）"""
+    if city in CITY_NORMALIZE:
+        return CITY_NORMALIZE[city]
+    return city
 
 
 # ========== 縣市列表 ==========
@@ -207,19 +213,22 @@ def infer_city(addr: str) -> str:
     return ""
 
 
-def get_city_code(addr: str) -> str:
-    """從地址取得城市代碼 (A/B/C...)"""
+def get_county_city(addr: str) -> str:
+    """從地址取得 land_data.db 格式的縣市名稱"""
     city = infer_city(addr)
     if city:
-        return CITY_NAME_TO_CODE.get(city, "")
+        return normalize_city_name(city)
     return ""
 
 
 def get_591_regionids(addr: str) -> list:
     """根據地址取得要嘗試的 591 regionid 列表"""
     city = infer_city(addr)
-    if city and city in CITY_TO_591_REGION:
-        return [CITY_TO_591_REGION[city]]
+    # 統一用臺 查 CITY_TO_591_REGION
+    city_tw = city.replace("台北市", "臺北市").replace("台中市", "臺中市") \
+                  .replace("台南市", "臺南市").replace("台東縣", "臺東縣")
+    if city_tw and city_tw in CITY_TO_591_REGION:
+        return [CITY_TO_591_REGION[city_tw]]
     return [1, 3, 6, 8, 15, 17, 5, 4, 10, 21, 19]
 
 
@@ -342,7 +351,7 @@ class Api591:
 # ========== 核心查詢引擎 ==========
 
 class AddressCommunityLookup:
-    """地址→社區名稱 查詢引擎 (transactions.db + 591 API)"""
+    """地址→社區名稱 查詢引擎 (land_data.db + 591 API)"""
 
     def __init__(self, db_path: str = None, enable_api: bool = True, verbose: bool = False):
         self.db_path = Path(db_path) if db_path else DB_PATH
@@ -352,7 +361,7 @@ class AddressCommunityLookup:
         self._connect_db()
 
     def _connect_db(self):
-        """連線 transactions.db"""
+        """連線 land_data.db"""
         if not self.db_path.exists():
             print(f"⚠️  資料庫不存在: {self.db_path}")
             return
@@ -364,7 +373,7 @@ class AddressCommunityLookup:
 
         # 確認記錄數
         cursor = self.conn.execute(
-            "SELECT COUNT(*) FROM transactions WHERE community IS NOT NULL AND community != ''"
+            "SELECT COUNT(*) FROM land_transaction WHERE community_name IS NOT NULL AND community_name != ''"
         )
         count = cursor.fetchone()[0]
         print(f"📂 已連線: {self.db_path.name}（{count:,} 筆有社區資料）")
@@ -381,40 +390,36 @@ class AddressCommunityLookup:
     def _make_search_patterns(self, addr_part: str, district: str = None, fuzzy_number: bool = False) -> list:
         """
         產生搜尋用的 LIKE 模式列表。
+
+        land_data.db 的 address 欄位格式:
+          "松山區八德路四段４４５號九樓之２０" （含區名、全形數字、無 # 分隔）
         
-        DB 地址格式: "松山區八德路四段０４４５號八樓#松山區八德路四段445號八樓"
-        - # 前面是全形數字含前導零
-        - # 後面是全形數字不含前導零
-        - 中文字是一般的漢字
-        
-        fuzzy_number: 若 True，則在 "XX號" 前加入 "%" 以匹配 "XX之Y號" 等變體
+        addr_part: 正規化後的地址（半形數字），如 "八德路四段445號"
+        fuzzy_number: 若 True，在號碼前加入 "%" 以匹配 "445之X號" 等變體
         """
         patterns = []
-        
-        # 處理 "之X" 變體：將 "123號" 變成 "123%號"
-        hw_part = addr_part
+
+        # 全形版本（land_data.db 使用全形數字）
         fw_part = halfwidth_to_fullwidth(addr_part)
-        
-        if fuzzy_number and re.search(r'\d+號', hw_part):
-            hw_fuzzy = re.sub(r'(\d+)號', r'\1%號', hw_part)
+
+        if fuzzy_number and re.search(r'\d+號', addr_part):
             fw_fuzzy = re.sub(r'([０-９]+)號', r'\1%號', fw_part)
         else:
-            hw_fuzzy = None
             fw_fuzzy = None
-        
+
         if district:
-            patterns.append(f"%{district}{hw_part}%")
             patterns.append(f"%{district}{fw_part}%")
-            if hw_fuzzy:
-                patterns.append(f"%{district}{hw_fuzzy}%")
+            if fw_fuzzy:
                 patterns.append(f"%{district}{fw_fuzzy}%")
-        
-        patterns.append(f"%{hw_part}%")
-        patterns.append(f"%{fw_part}%")
-        if hw_fuzzy:
-            patterns.append(f"%{hw_fuzzy}%")
-            patterns.append(f"%{fw_fuzzy}%")
-        
+            # 不帶區（有時 address 不含區前綴）
+            patterns.append(f"%{fw_part}%")
+            if fw_fuzzy:
+                patterns.append(f"%{fw_fuzzy}%")
+        else:
+            patterns.append(f"%{fw_part}%")
+            if fw_fuzzy:
+                patterns.append(f"%{fw_fuzzy}%")
+
         # 去重但保持順序
         seen = set()
         unique = []
@@ -424,36 +429,38 @@ class AddressCommunityLookup:
                 unique.append(p)
         return unique
 
-    def _query_db_exact(self, norm: str, city_code: str = None, district: str = None) -> list:
-        """Level 1: 精確地址匹配 - 在 DB 的 address 欄位中搜尋"""
+    def _query_db_exact(self, norm: str, county_city: str = None, district: str = None) -> list:
+        """Level 1: 精確地址匹配"""
         if not self.conn:
             return []
 
-        # 先嘗試精確匹配，再嘗試模糊數字匹配（處理 "之X號" 變體）
         for fuzzy in (False, True):
             search_patterns = self._make_search_patterns(norm, district, fuzzy_number=fuzzy)
-            
+
             for pattern in search_patterns:
                 sql = """
-                    SELECT community, COUNT(*) as cnt, city, town, address
-                    FROM transactions
-                    WHERE address LIKE ? AND community IS NOT NULL AND community != ''
+                    SELECT community_name, COUNT(*) as cnt, county_city, district, address
+                    FROM land_transaction
+                    WHERE address LIKE ? AND community_name IS NOT NULL AND community_name != ''
                 """
                 params = [pattern]
-                if city_code:
-                    sql += " AND city = ?"
-                    params.append(city_code)
-                sql += " GROUP BY community ORDER BY cnt DESC LIMIT 5"
+                if district:
+                    sql += " AND district = ?"
+                    params.append(district)
+                elif county_city:
+                    sql += " AND county_city = ?"
+                    params.append(county_city)
+                sql += " GROUP BY community_name ORDER BY cnt DESC LIMIT 5"
 
                 cursor = self.conn.execute(sql, params)
                 rows = cursor.fetchall()
                 if rows:
-                    return [{"community": r["community"], "count": r["cnt"],
-                             "city_code": r["city"], "town": r["town"],
+                    return [{"community": r["community_name"], "count": r["cnt"],
+                             "county_city": r["county_city"], "district": r["district"],
                              "sample_address": r["address"]} for r in rows]
         return []
 
-    def _query_db_road_number(self, road_number: str, city_code: str = None, district: str = None) -> list:
+    def _query_db_road_number(self, road_number: str, county_city: str = None, district: str = None) -> list:
         """Level 2: 路+門牌號匹配"""
         if not self.conn or not road_number:
             return []
@@ -462,24 +469,27 @@ class AddressCommunityLookup:
             search_patterns = self._make_search_patterns(road_number, district, fuzzy_number=fuzzy)
             for pattern in search_patterns:
                 sql = """
-                    SELECT community, COUNT(*) as cnt, city, town
-                    FROM transactions
-                    WHERE address LIKE ? AND community IS NOT NULL AND community != ''
+                    SELECT community_name, COUNT(*) as cnt, county_city, district
+                    FROM land_transaction
+                    WHERE address LIKE ? AND community_name IS NOT NULL AND community_name != ''
                 """
                 params = [pattern]
-                if city_code:
-                    sql += " AND city = ?"
-                    params.append(city_code)
-                sql += " GROUP BY community ORDER BY cnt DESC LIMIT 5"
+                if district:
+                    sql += " AND district = ?"
+                    params.append(district)
+                elif county_city:
+                    sql += " AND county_city = ?"
+                    params.append(county_city)
+                sql += " GROUP BY community_name ORDER BY cnt DESC LIMIT 5"
 
                 cursor = self.conn.execute(sql, params)
                 rows = cursor.fetchall()
                 if rows:
-                    return [{"community": r["community"], "count": r["cnt"],
-                             "city_code": r["city"], "town": r["town"]} for r in rows]
+                    return [{"community": r["community_name"], "count": r["cnt"],
+                             "county_city": r["county_city"], "district": r["district"]} for r in rows]
         return []
 
-    def _query_db_alley(self, alley: str, city_code: str = None, district: str = None) -> list:
+    def _query_db_alley(self, alley: str, county_city: str = None, district: str = None) -> list:
         """Level 3: 巷弄匹配"""
         if not self.conn or not alley:
             return []
@@ -487,28 +497,32 @@ class AddressCommunityLookup:
         search_patterns = self._make_search_patterns(alley, district, fuzzy_number=False)
         for pattern in search_patterns:
             sql = """
-                SELECT community, COUNT(*) as cnt, city, town
-                FROM transactions
-                WHERE address LIKE ? AND community IS NOT NULL AND community != ''
+                SELECT community_name, COUNT(*) as cnt, county_city, district
+                FROM land_transaction
+                WHERE address LIKE ? AND community_name IS NOT NULL AND community_name != ''
             """
             params = [pattern]
-            if city_code:
-                sql += " AND city = ?"
-                params.append(city_code)
-            sql += " GROUP BY community ORDER BY cnt DESC LIMIT 5"
+            if district:
+                sql += " AND district = ?"
+                params.append(district)
+            elif county_city:
+                sql += " AND county_city = ?"
+                params.append(county_city)
+            sql += " GROUP BY community_name ORDER BY cnt DESC LIMIT 5"
 
             cursor = self.conn.execute(sql, params)
             rows = cursor.fetchall()
             if rows:
-                return [{"community": r["community"], "count": r["cnt"],
-                         "city_code": r["city"], "town": r["town"]} for r in rows]
+                return [{"community": r["community_name"], "count": r["cnt"],
+                         "county_city": r["county_city"], "district": r["district"]} for r in rows]
         return []
 
-    def _query_db_road(self, road: str, city_code: str = None, district: str = None) -> list:
+    def _query_db_road(self, road: str, county_city: str = None, district: str = None) -> list:
         """Level 4: 路段匹配"""
         if not self.conn or not road:
             return []
 
+        # 路段名稱都是中文，直接用中文搜尋
         search_patterns = []
         if district:
             search_patterns.append(f"%{district}{road}%")
@@ -516,72 +530,55 @@ class AddressCommunityLookup:
 
         for pattern in search_patterns:
             sql = """
-                SELECT community, COUNT(*) as cnt, city, town
-                FROM transactions
-                WHERE address LIKE ? AND community IS NOT NULL AND community != ''
+                SELECT community_name, COUNT(*) as cnt, county_city, district
+                FROM land_transaction
+                WHERE address LIKE ? AND community_name IS NOT NULL AND community_name != ''
             """
             params = [pattern]
-            if city_code:
-                sql += " AND city = ?"
-                params.append(city_code)
-            sql += " GROUP BY community ORDER BY cnt DESC LIMIT 10"
+            if district:
+                sql += " AND district = ?"
+                params.append(district)
+            elif county_city:
+                sql += " AND county_city = ?"
+                params.append(county_city)
+            sql += " GROUP BY community_name ORDER BY cnt DESC LIMIT 10"
 
             cursor = self.conn.execute(sql, params)
             rows = cursor.fetchall()
             if rows:
-                return [{"community": r["community"], "count": r["cnt"],
-                         "city_code": r["city"], "town": r["town"]} for r in rows]
+                return [{"community": r["community_name"], "count": r["cnt"],
+                         "county_city": r["county_city"], "district": r["district"]} for r in rows]
         return []
 
-    def _get_district_from_town(self, city_code: str, town: str) -> str:
-        """從 city+town 代碼推斷區域名稱（從 DB 記錄中提取）"""
-        if not self.conn:
-            return ""
-        try:
-            cursor = self.conn.execute(
-                "SELECT address FROM transactions WHERE city=? AND town=? LIMIT 1",
-                (city_code, town)
-            )
-            row = cursor.fetchone()
-            if row:
-                addr = row["address"]
-                if "#" in addr:
-                    addr = addr.split("#", 1)[1]
-                m = re.match(r"([\u4e00-\u9fff]{1,3}[區鎮鄉市])", addr)
-                if m:
-                    return m.group(1)
-        except Exception:
-            pass
-        return ""
+
 
     def query(self, address: str, top_n: int = 5) -> dict:
         """查詢地址對應的社區/建案名稱"""
         norm = normalize_address(address)
         input_district = extract_district(address)
         input_city = infer_city(address)
-        city_code = get_city_code(address)
+        county_city = get_county_city(address)
         results = []
 
         if self.verbose:
             print(f"  🔍 查詢: {address}")
             print(f"     正規化: {norm}")
             if input_city:
-                print(f"     城市: {input_city} ({city_code})")
+                print(f"     城市: {input_city} ({county_city})")
             if input_district:
                 print(f"     區域: {input_district}")
 
         if self.conn:
             # Level 1: 完整地址精確匹配
-            db_results = self._query_db_exact(norm, city_code, input_district)
+            db_results = self._query_db_exact(norm, county_city, input_district)
             if db_results:
                 for r in db_results:
-                    district = input_district or self._get_district_from_town(r["city_code"], r["town"])
                     results.append({
                         "community": r["community"],
                         "confidence": 98,
                         "match_level": "完整地址精確匹配",
-                        "district": district,
-                        "source": "transactions.db",
+                        "district": r.get("district") or input_district,
+                        "source": "land_data.db",
                         "count": r["count"],
                     })
                 if self.verbose:
@@ -590,16 +587,15 @@ class AddressCommunityLookup:
             # Level 2: 門牌號匹配
             if not results or results[0]["confidence"] < 80:
                 to_num = extract_road_number(norm)
-                db_results = self._query_db_road_number(to_num, city_code, input_district)
+                db_results = self._query_db_road_number(to_num, county_city, input_district)
                 if db_results:
                     for r in db_results:
-                        district = input_district or self._get_district_from_town(r["city_code"], r["town"])
                         results.append({
                             "community": r["community"],
                             "confidence": 90,
                             "match_level": "門牌號匹配",
-                            "district": district,
-                            "source": "transactions.db",
+                            "district": r.get("district") or input_district,
+                            "source": "land_data.db",
                             "count": r["count"],
                         })
                     if self.verbose:
@@ -608,17 +604,16 @@ class AddressCommunityLookup:
             # Level 3: 巷弄匹配
             if not results or all(r["confidence"] < 70 for r in results):
                 to_alley = extract_road_alley(norm)
-                if to_alley:
-                    db_results = self._query_db_alley(to_alley, city_code, input_district)
+                if to_alley and (input_district or county_city):  # 需要有區/市才做全掃描
+                    db_results = self._query_db_alley(to_alley, county_city, input_district)
                     if db_results:
                         for r in db_results:
-                            district = input_district or self._get_district_from_town(r["city_code"], r["town"])
                             results.append({
                                 "community": r["community"],
                                 "confidence": 72,
                                 "match_level": "巷弄匹配",
-                                "district": district,
-                                "source": "transactions.db",
+                                "district": r.get("district") or input_district,
+                                "source": "land_data.db",
                                 "count": r["count"],
                             })
                         if self.verbose:
@@ -627,17 +622,16 @@ class AddressCommunityLookup:
             # Level 4: 路段匹配
             if not results or all(r["confidence"] < 50 for r in results):
                 road = extract_road(norm)
-                if road:
-                    db_results = self._query_db_road(road, city_code, input_district)
+                if road and (input_district or county_city):  # 需要有區/市才做全掃描
+                    db_results = self._query_db_road(road, county_city, input_district)
                     if db_results:
                         for r in db_results:
-                            district = input_district or self._get_district_from_town(r["city_code"], r["town"])
                             results.append({
                                 "community": r["community"],
                                 "confidence": 40,
                                 "match_level": "路段匹配",
-                                "district": district,
-                                "source": "transactions.db",
+                                "district": r.get("district") or input_district,
+                                "source": "land_data.db",
                                 "count": r["count"],
                             })
                         if self.verbose:
@@ -719,11 +713,11 @@ class AddressCommunityLookup:
         if not self.conn:
             return {"total_records": 0, "unique_communities": 0}
         cursor = self.conn.execute(
-            "SELECT COUNT(*) FROM transactions WHERE community IS NOT NULL AND community != ''"
+            "SELECT COUNT(*) FROM land_transaction WHERE community_name IS NOT NULL AND community_name != ''"
         )
         total = cursor.fetchone()[0]
         cursor = self.conn.execute(
-            "SELECT COUNT(DISTINCT community) FROM transactions WHERE community IS NOT NULL AND community != ''"
+            "SELECT COUNT(DISTINCT community_name) FROM land_transaction WHERE community_name IS NOT NULL AND community_name != ''"
         )
         unique = cursor.fetchone()[0]
         return {"total_records": total, "unique_communities": unique}
@@ -782,7 +776,7 @@ def interactive_mode(lookup_engine: AddressCommunityLookup):
     """互動模式"""
     stats = lookup_engine.stats()
     print("=" * 60)
-    print("🏘️  地址→社區名稱 查詢工具 (transactions.db + 591 API)")
+    print("🏠  地址→社區名稱 查詢工具 (land_data.db + 591 API)")
     print("=" * 60)
     print(f"📊 本地資料: {stats.get('total_records', 0):,} 筆 | "
           f"社區: {stats.get('unique_communities', 0):,}")
