@@ -36,110 +36,38 @@ import re
 import argparse
 from itertools import product
 
+# ── 共用模組 ──────────────────────────────────────────────────────────────────
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from address_utils import (
+    fullwidth_to_halfwidth,
+    halfwidth_to_fullwidth,
+    chinese_numeral_to_int,
+    arabic_to_chinese,
+    normalize_address,
+    parse_query,
+    CHINESE_NUM_CHARS,
+    CN_DIGIT_MAP,
+)
+
+# 向後相容別名 (供 web/server.py 等使用)
+normalize_query = lambda text: normalize_address(text, for_query=True)
+
 # ── 路徑 ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB = os.path.join(SCRIPT_DIR, '..', 'db', 'land_data.db')
 
-# ── 數字常數 ──────────────────────────────────────────────────────────────────
-FULLWIDTH_DIGITS = '０１２３４５６７８９'
-HALFWIDTH_DIGITS = '0123456789'
-CN_BASIC = {
-    '零': 0, '一': 1, '二': 2, '兩': 2, '三': 3, '四': 4,
-    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10, '百': 100,
-}
-CN_DIGIT_MAP = ['零','一','二','三','四','五','六','七','八','九']
-CHINESE_NUM_CHARS = '○零一壹二貳兩三參叁四肆五伍六陸七柒八捌九玖十拾百佰千仟'
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 數字轉換
+# 數字變體產生 (搜尋專用)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-def fullwidth_to_halfwidth(text):
-    result = []
-    for ch in text:
-        code = ord(ch)
-        if 0xFF01 <= code <= 0xFF5E:
-            result.append(chr(code - 0xFEE0))
-        elif code == 0x3000:
-            result.append(' ')
-        else:
-            result.append(ch)
-    return ''.join(result)
-
-def halfwidth_to_fullwidth(text):
-    result = []
-    for ch in text:
-        idx = HALFWIDTH_DIGITS.find(ch)
-        result.append(FULLWIDTH_DIGITS[idx] if idx >= 0 else ch)
-    return ''.join(result)
-
-def _cn_str_to_int(s):
-    if not s:
-        return None
-    if all(c in CN_DIGIT_MAP for c in s):
-        try:
-            return int(''.join(str(CN_DIGIT_MAP.index(c)) for c in s))
-        except:
-            pass
-    try:
-        result = 0
-        current = 0
-        for ch in s:
-            if ch in ('零', '〇'):
-                continue
-            elif ch == '十':
-                if current == 0: current = 1
-                result += current * 10
-                current = 0
-            elif ch == '百':
-                result += current * 100
-                current = 0
-            else:
-                v = CN_BASIC.get(ch)
-                if v is None: return None
-                current = v
-        result += current
-        return result if result > 0 else None
-    except:
-        return None
-
-def arabic_to_chinese(n):
-    if n <= 0 or n > 9999: return []
-    results = set()
-    results.add(''.join(CN_DIGIT_MAP[int(d)] for d in str(n)))
-    # 標準中文
-    parts = []
-    tens = (n % 100) // 10
-    units = n % 10
-    hundreds = (n % 1000) // 100
-    thousands = n // 1000
-    if thousands: parts.append(CN_DIGIT_MAP[thousands] + '千')
-    if hundreds:
-        parts.append(CN_DIGIT_MAP[hundreds] + '百')
-    elif thousands and (tens or units):
-        parts.append('零')
-    if tens:
-        if tens == 1 and not thousands and not hundreds:
-            parts.append('十')
-        else:
-            parts.append(CN_DIGIT_MAP[tens] + '十')
-    elif (thousands or hundreds) and units:
-        parts.append('零')
-    if units:
-        parts.append(CN_DIGIT_MAP[units])
-    results.add(''.join(parts))
-    if 10 <= n <= 19:
-        results.add('一十' + (CN_DIGIT_MAP[n%10] if n%10 else ''))
-        results.add('十' + (CN_DIGIT_MAP[n%10] if n%10 else ''))
-    return list(results)
 
 def generate_number_variants(num_str):
+    """產生數字的所有表示變體（半形/全形/中文）"""
     variants = set()
     normalized = fullwidth_to_halfwidth(num_str)
     try:
         n = int(normalized)
-    except:
+    except (ValueError, TypeError):
         n = None
     variants.add(normalized)
     variants.add(halfwidth_to_fullwidth(normalized))
@@ -147,129 +75,8 @@ def generate_number_variants(num_str):
         for cn in arabic_to_chinese(n):
             variants.add(cn)
         if 20 <= n <= 29:
-            variants.add('廿' + (CN_DIGIT_MAP[n%10] if n%10 else ''))
+            variants.add('廿' + (CN_DIGIT_MAP[n % 10] if n % 10 else ''))
     return [v for v in variants if v]
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 地址解析與變體產生
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def normalize_query(text):
-    """正規化查詢字串"""
-    text = fullwidth_to_halfwidth(text.strip())
-    text = text.replace('\u5DFF', '市').replace('臺', '台')
-    # 中文數字→阿拉伯 (在特定後綴前)
-    pattern = re.compile(rf'([{CHINESE_NUM_CHARS}]+)(樓|層|號|巷|弄|之|鄰|F|f)')
-    def _repl(m):
-        num = _cn_str_to_int(m.group(1))
-        if num is not None:
-            return f'{num}{m.group(2)}'
-        return m.group(0)
-    text = pattern.sub(_repl, text)
-
-    # 將數字段統一轉為國字段 (e.g. 3段 -> 三段)
-    arabic_to_cn = {
-        '1': '一', '2': '二', '3': '三', '4': '四', '5': '五',
-        '6': '六', '7': '七', '8': '八', '9': '九', '10': '十'
-    }
-    def _repl_sec(m):
-        n = m.group(1)
-        cn = arabic_to_cn.get(n) if len(n) <= 2 else None
-        if cn:
-            return f"{cn}段"
-        return m.group(0)
-    text = re.sub(r'(\d+)段', _repl_sec, text)
-
-    return text
-
-
-CITY_PATTERN = re.compile(
-    r'^(台北市|新北市|桃園市|台中市|台南市|高雄市|'
-    r'基隆市|新竹(?:市|縣)|嘉義(?:市|縣)|'
-    r'苗栗縣|彰化縣|南投縣|雲林縣|屏東縣|'
-    r'台東縣|花蓮縣|宜蘭縣|澎湖縣|金門縣|連江縣)'
-)
-
-
-def parse_query(query):
-    """
-    解析使用者查詢, 萃取結構化條件。
-    回傳 dict: county_city, district, street, lane, alley, number, floor, sub_number
-    """
-    addr = normalize_query(query)
-    result = {k: '' for k in
-              ['county_city', 'district', 'street', 'lane', 'alley',
-               'number', 'floor', 'sub_number']}
-
-    # 縣市
-    m = CITY_PATTERN.match(addr)
-    if m:
-        result['county_city'] = m.group(1)
-        addr = addr[m.end():]
-
-    # 鄉鎮市區
-    m = re.match(r'^(.{1,4}?(?:區|鄉|鎮|市))(?=.)', addr)
-    if m:
-        result['district'] = m.group(1)
-        addr = addr[m.end():]
-
-    # 里
-    m = re.match(r'^(.{1,5}?里)(?=[^\d]*(?:路|街|大道|\d))', addr)
-    if m:
-        addr = addr[m.end():]
-
-    # 鄰
-    m = re.match(r'^(\d+鄰)', addr)
-    if m:
-        addr = addr[m.end():]
-
-    # 街路名 (含段)
-    m = re.match(r'^(.+?(?:路|街|大道))([一二三四五六七八九十\d]+段)?', addr)
-    if m:
-        result['street'] = m.group(1) + (m.group(2) or '')
-        addr = addr[m.end():]
-
-    # 巷
-    m = re.match(r'^(\d+)巷', addr)
-    if m:
-        result['lane'] = m.group(1)
-        addr = addr[len(m.group(0)):]
-
-    # 弄
-    m = re.match(r'^(\d+)弄', addr)
-    if m:
-        result['alley'] = m.group(1)
-        addr = addr[len(m.group(0)):]
-
-    # 號 — X之Y號 → number=X, sub_number=Y;  X號 → number=X
-    m = re.match(r'^(\d+)(?:之(\d+))?號', addr)
-    if m:
-        result['number'] = m.group(1)
-        if m.group(2):
-            result['sub_number'] = m.group(2)
-        addr = addr[len(m.group(0)):]
-
-    # 號之Y (如 53號之3)
-    m2 = re.match(r'^之(\d+)', addr)
-    if m2:
-        if not result['sub_number']:
-            result['sub_number'] = m2.group(1)
-        addr = addr[len(m2.group(0)):]
-
-    # 樓
-    m = re.match(r'^(\d+)(?:樓|層|[Ff])', addr)
-    if m:
-        result['floor'] = m.group(1)
-        addr = addr[len(m.group(0)):]
-
-    # 之 (樓之X, 如 53號12樓之8)
-    m = re.match(r'^之(\d+)', addr)
-    if m:
-        if not result['sub_number']:
-            result['sub_number'] = m.group(1)
-
-    return result
 
 
 def parse_address_tokens(address):
@@ -297,7 +104,7 @@ def parse_address_tokens(address):
         for m in CN_NUM_PAT.finditer(text):
             start, end = m.start(), m.end()
             cn_str = m.group(1)
-            arabic_val = _cn_str_to_int(cn_str)
+            arabic_val = chinese_numeral_to_int(cn_str)
             if start > pos:
                 tokens.append({'type': 'text', 'val': text[pos:start]})
             if arabic_val and arabic_val > 0:

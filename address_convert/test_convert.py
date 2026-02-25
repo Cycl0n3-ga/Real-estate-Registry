@@ -90,7 +90,7 @@ def test_parse_address():
             'district_col': '中正區',
             'expected': {
                 'county_city': '台北市', 'district': '中正區',
-                'street': '忠孝東路2段', 'number': '130',
+                'street': '忠孝東路二段', 'number': '130',
                 'floor': '9', 'sub_number': '1',
             }
         },
@@ -132,7 +132,7 @@ def test_parse_address():
             'district_col': '大安區',
             'expected': {
                 'county_city': '台北市', 'district': '大安區',
-                'street': '仁愛路3段', 'number': '53',
+                'street': '仁愛路三段', 'number': '53',
                 'floor': '21', 'sub_number': '3',
             }
         },
@@ -141,7 +141,7 @@ def test_parse_address():
             'district_col': '大安區',
             'expected': {
                 'county_city': '台北市', 'district': '大安區',
-                'street': '仁愛路3段', 'number': '53',
+                'street': '仁愛路三段', 'number': '53',
                 'floor': '12', 'sub_number': '8',
             }
         },
@@ -150,7 +150,7 @@ def test_parse_address():
             'district_col': '內湖區',
             'expected': {
                 'county_city': '台北市', 'district': '內湖區',
-                'street': '民權東路6段', 'number': '150',
+                'street': '民權東路六段', 'number': '150',
                 'floor': '9', 'sub_number': '3',
             }
         },
