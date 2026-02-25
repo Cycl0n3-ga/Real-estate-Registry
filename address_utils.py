@@ -235,11 +235,48 @@ def normalize_address(text: str, *, for_query: bool = False) -> str:
 
 
 # ============================================================
-# 鄉鎮市區 → 縣市映射
+# 內政部城市代碼 → 縣市名
+# ============================================================
+
+CITY_CODE_MAP = {
+    'A': '台北市', 'B': '台中市', 'C': '基隆市', 'D': '台南市',
+    'E': '高雄市', 'F': '新北市', 'G': '宜蘭縣', 'H': '桃園市',
+    'I': '嘉義市', 'J': '新竹縣', 'K': '苗栗縣', 'M': '南投縣',
+    'N': '彰化縣', 'O': '新竹市', 'P': '雲林縣', 'Q': '嘉義縣',
+    'T': '屏東縣', 'U': '花蓮縣', 'V': '台東縣', 'W': '金門縣',
+    'X': '澎湖縣', 'Z': '連江縣',
+}
+
+# 反查: 縣市名 → 城市代碼
+CITY_NAME_TO_CODE = {v: k for k, v in CITY_CODE_MAP.items()}
+
+
+# ============================================================
+# 歧義區名 → 可能城市列表 (依人口/交易量排序)
+# ============================================================
+
+AMBIGUOUS_DISTRICTS = {
+    '中山區': ['台北市', '基隆市'],
+    '中正區': ['台北市', '基隆市'],
+    '信義區': ['台北市', '基隆市'],
+    '仁愛區': ['基隆市'],           # 南投縣是仁愛「鄉」不衝突
+    '大安區': ['台北市', '台中市'],
+    '東區':   ['台中市', '台南市', '新竹市', '嘉義市'],
+    '西區':   ['台中市', '嘉義市'],
+    '南區':   ['台中市', '台南市'],
+    '北區':   ['台中市', '台南市', '新竹市'],
+    '中區':   ['台中市'],
+    '中西區': ['台南市'],
+    '安平區': ['台南市'],
+}
+
+
+# ============================================================
+# 鄉鎮市區 → 縣市映射 (僅非歧義區域)
 # ============================================================
 
 DISTRICT_CITY_MAP = {
-    # 台北市
+    # 台北市 (非歧義)
     '松山區': '台北市', '萬華區': '台北市', '文山區': '台北市',
     '南港區': '台北市', '內湖區': '台北市', '士林區': '台北市',
     '北投區': '台北市', '大同區': '台北市',
@@ -381,6 +418,11 @@ DISTRICT_CITY_MAP = {
     '新竹市': '新竹市', '嘉義市': '嘉義市', '基隆市': '基隆市',
 }
 
+# 合併歧義區（僅一個候選的直接加入 DISTRICT_CITY_MAP）
+for _d, _cities in AMBIGUOUS_DISTRICTS.items():
+    if len(_cities) == 1:
+        DISTRICT_CITY_MAP[_d] = _cities[0]
+
 
 # ============================================================
 # 地址解析
@@ -399,13 +441,14 @@ OLD_TO_NEW = {
 }
 
 
-def parse_address(raw_address, district_col=''):
+def parse_address(raw_address, district_col='', city_hint=''):
     """
     解析台灣地址為各組成部分。
 
     Args:
         raw_address: 原始地址字串
         district_col: CSV 中獨立的鄉鎮市區欄值（可選，用作 fallback）
+        city_hint: 已知縣市（如來自 city_code），用於歧義區名消歧
 
     Returns:
         dict with keys: county_city, district, village, neighborhood,
@@ -443,7 +486,17 @@ def parse_address(raw_address, district_col=''):
         result['district'] = normalize_address(district_col.strip())
 
     if not result['county_city'] and result['district']:
+        # 先查非歧義映射
         result['county_city'] = DISTRICT_CITY_MAP.get(result['district'], '')
+        # 若仍為空且為歧義區，使用 city_hint 消歧
+        if not result['county_city'] and result['district'] in AMBIGUOUS_DISTRICTS:
+            if city_hint:
+                norm_hint = city_hint.replace('臺', '台')
+                if norm_hint in AMBIGUOUS_DISTRICTS[result['district']]:
+                    result['county_city'] = norm_hint
+            if not result['county_city']:
+                # fallback: 取第一個候選（按交易量排序的最大城市）
+                result['county_city'] = AMBIGUOUS_DISTRICTS[result['district']][0]
 
     # 里
     m = re.match(r'^(.{1,5}?里)(?=[^\d]*(?:路|街|大道|\d+鄰))', addr)

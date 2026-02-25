@@ -176,8 +176,54 @@ def test_parse_address():
     print(f'✅ 地址解析 OK ({len(cases)} 個測試)')
 
 
+def test_ambiguous_districts():
+    """測試歧義區名消歧"""
+    from address_utils import parse_address as pa
+
+    # 中山區: 無 hint → fallback 台北市 (最大量)
+    r = pa('中山區松江路25巷5號2樓', '中山區')
+    assert r['county_city'] == '台北市', f"中山區 no hint: {r['county_city']}"
+    assert r['district'] == '中山區'
+    assert r['street'] == '松江路'
+
+    # 中山區: 有 city_hint=基隆市 → 基隆市
+    r = pa('中山區中和路153號', '中山區', city_hint='基隆市')
+    assert r['county_city'] == '基隆市', f"中山區 hint基隆: {r['county_city']}"
+
+    # 中正區: hint=台北市 → 台北市
+    r = pa('中正區忠孝東路一段10號', '中正區', city_hint='台北市')
+    assert r['county_city'] == '台北市'
+
+    # 中正區: hint=基隆市 → 基隆市
+    r = pa('中正區新豐街486號', '中正區', city_hint='基隆市')
+    assert r['county_city'] == '基隆市'
+
+    # 東區: hint=新竹市
+    r = pa('東區光復路一段89號', '東區', city_hint='新竹市')
+    assert r['county_city'] == '新竹市'
+
+    # 中西區: 不歧義 → 直接台南市
+    r = pa('中西區民權路100號', '中西區')
+    assert r['county_city'] == '台南市', f"中西區: {r['county_city']}"
+
+    # 中區: 不歧義 → 台中市
+    r = pa('中區三民路100號', '中區')
+    assert r['county_city'] == '台中市', f"中區: {r['county_city']}"
+
+    # 安平區: 不歧義 → 台南市
+    r = pa('安平區安平路100號', '安平區')
+    assert r['county_city'] == '台南市', f"安平區: {r['county_city']}"
+
+    # 臺北市 (繁體臺) 應正規化為台北市
+    r = pa('臺北市大安區忠孝東路100號', '大安區')
+    assert r['county_city'] == '台北市', f"臺→台: {r['county_city']}"
+
+    print('✅ 歧義區名消歧 OK')
+
+
 if __name__ == '__main__':
     test_chinese_numeral()
     test_normalize()
     test_parse_address()
+    test_ambiguous_districts()
     print('\n🎉 所有測試通過!')
