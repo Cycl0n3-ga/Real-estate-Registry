@@ -2,102 +2,133 @@
 
 ## 概述
 
-`convert.py` 整合政府實價登錄 CSV 與 LVR API 兩種資料來源，產出統一格式的 SQLite 資料庫。
+`convert.py` (v4) 能**自動識別**任意輸入來源 (CSV / API DB / land_data.db)，清洗後**增量匯入**統一格式的 `land_data.db`。
 
-支援三種資料來源模式，透過 `--source` 參數切換：
-
-| 模式 | 說明 |
-|------|------|
-| `csv` | 僅從政府 CSV 匯入 |
-| `api` | 僅從 LVR API DB 匯入 |
-| `both` | **CSV + API 合併**（預設） |
-
-> 本模組**完全取代** `merge_csv_api/merge_and_enrich.py` 的三步驟流程。
+核心設計原則：
+- **丟什麼進來都行** — 自動偵測 CSV 格式或 SQLite schema
+- **不破壞既有資料** — 預設增量匯入，已存在的交易會 enrich 而非覆蓋
+- **壞資料自動丟棄** — 缺地址、無門牌號的記錄直接 discard
 
 ## 架構
 
 ```
 address_convert/
-├── convert.py        # 主要轉換腳本 (1143 行)
-├── test_convert.py   # 單元測試
-└── README.md         # 本文件
+├── convert.py            # 主轉換腳本 (v4)
+├── convert_v3_backup.py  # v3 備份
+├── test_convert.py       # 單元測試
+└── README.md             # 本文件
 
-../address_utils.py   # 共用模組 (地址解析、正規化、消歧)
+../address_utils.py       # 共用模組 (地址解析、正規化、消歧)
 ../db/
-├── ALL_lvr_land_a.csv              # CSV 來源 (政府公開資料)
-├── transactions_all_original.db    # API 來源 (LVR API 抓取)
-└── land_data.db                    # 輸出: 合併後的 SQLite 資料庫
+├── ALL_lvr_land_a.csv    # CSV 來源 (政府公開資料)
+├── transactions*.db      # API 來源 (LVR API 抓取)
+└── land_data.db          # 目標: 統一格式的 SQLite 資料庫
+```
+
+### 程式七層架構
+
+```
+第一層  安全型別轉換     safe_int / safe_float / parse_price
+第二層  資料來源識別     detect_source → SourceType (CSV_LVR / CSV_GENERIC / API_DB / LAND_DB)
+第三層  地址工具函式     parse_floor_info / normalize_date / strip_city / strip_floor ...
+第四層  LandDataDB 類    schema管理 + 去重 + enrich + 社區回填 + finalize
+第五層  record 解析器    _parse_csv_row / _parse_api_row / _parse_land_db_row / _parse_generic_csv_row
+第六層  匯入引擎         import_csv_lvr / import_api_db / import_land_db / import_csv_generic
+第七層  主流程 + CLI     convert_v4() / import_file() / main()
 ```
 
 ## 用法
 
+### 新版 (v4 推薦用法)
+
 ```bash
-# 預設: 合併兩種來源 (推薦)
+# 自動偵測並增量匯入 (最常用)
+python3 convert.py data.csv                     # 自動識別為 LVR CSV
+python3 convert.py transactions.db              # 自動識別為 API DB
+python3 convert.py a.csv b.db c.csv             # 多檔依序匯入
+
+# 重建 land_data.db (清空重來)
+python3 convert.py --rebuild data.csv transactions.db
+
+# 指定目標 DB
+python3 convert.py --target /path/to/land_data.db data.csv
+
+# 無參數: 自動找 ../db/ 下的預設檔案 (等同舊版 --source both)
 python3 convert.py
+```
 
-# 僅 CSV
+### 向後相容 (v3)
+
+```bash
 python3 convert.py --source csv
-
-# 僅 API
 python3 convert.py --source api
-
-# 指定路徑
-python3 convert.py --csv-input data.csv --api-input trans.db -o out.db
+python3 convert.py --source both
+python3 convert.py --csv-input a.csv --api-input t.db -o out.db
 ```
 
 ### 參數
 
-| 參數 | 預設值 | 說明 |
-|------|--------|------|
-| `--source`, `-s` | `both` | 資料來源: `csv`, `api`, `both` |
-| `--csv-input` | `../db/ALL_lvr_land_a.csv` | CSV 輸入路徑 |
-| `--api-input` | `../db/transactions_all_original.db` | API DB 路徑 |
-| `--output`, `-o` | `../db/land_data.db` | SQLite 輸出路徑 |
+| 參數 | 說明 |
+|------|------|
+| `inputs` (positional) | 輸入檔案路徑 (CSV / .db)，可多個 |
+| `--target`, `-t` | 目標 land_data.db 路徑 |
+| `--rebuild`, `-r` | 重建模式: 刪除舊 DB 重新匯入 |
+| `--skip-finalize` | 跳過建索引/FTS/VACUUM |
+| `--source`, `-s` | [向後相容] csv / api / both |
+| `--csv-input` | [向後相容] CSV 路徑 |
+| `--api-input` | [向後相容] API DB 路徑 |
+| `--output`, `-o` | [向後相容] 同 --target |
 
-## 合併策略 (`--source both`)
+## 自動識別邏輯
 
 ```
-Phase 1: CSV 載入
-  ├── 讀取 ALL_lvr_land_a.csv (跳過 2 列標頭)
-  ├── 地址正規化 + 結構化解析
-  └── 批次寫入 land_data.db
+輸入檔案
+├── .csv → 讀取第一行 header
+│     ├── 包含 '鄉鎮市區','交易年月日' 等 → CSV_LVR (政府 33 欄格式)
+│     └── 包含 '地址','總價' 等其他欄位   → CSV_GENERIC (通用欄位映射)
+├── .db / .sqlite → 檢查 SQLite schema
+│     ├── 有 land_transaction 表 → LAND_DB (另一個 land_data.db)
+│     └── 有 transactions 表     → API_DB (LVR API 抓取)
+└── 其他 → 嘗試當 CSV 讀，失敗則 UNKNOWN
+```
 
-Phase 2: API 合併 (3 個子階段)
-  ├── Phase A — 去重插入
-  │     比對 (日期+地址) 或 (日期+總價)
-  │     └── 不存在 → 新增 | 資料缺損 → 丟棄
+## 去重 + Enrich 策略
+
+每筆記錄進入 `LandDataDB.upsert_record()` 時：
+
+```
+record
   │
-  ├── Phase B — Enrich 補充
-  │     三層匹配: 全址 → 日期+總價 → 去樓層基礎地址
-  │     └── 補充: lat/lng, 社區名, 縣市, 建物型態, 房廳衛...
+  ├── 資料品質檢查: 地址必須包含「號」或「地號」
+  │     └── 不合格 → discard
   │
-  └── Phase C — 社區名回填
-        建立 (縣市, 行政區, 門牌) → 社區名 映射
-        └── 批次 UPDATE 匹配的空白記錄
-
-Phase 3: 索引 + FTS5 + ANALYZE + VACUUM
+  ├── 計算去重 key
+  │     ├── key_addr  = (交易日期前7碼, 正規化地址去縣市)
+  │     └── key_price = (交易日期前7碼, 總價)
+  │
+  ├── 已存在? (addr_key 或 price_key 命中)
+  │     ├── 讀取既有記錄的 26 個可補充欄位
+  │     ├── 新資料有值且舊資料為空 → UPDATE (enrich)
+  │     └── 無新資訊 → 視為重複，跳過
+  │
+  └── 不存在 → INSERT 新記錄
 ```
 
-### Phase A 去重邏輯
+### Enrich 涵蓋的 26 個欄位
 
-```
-API 記錄 → 正規化地址 + 日期
-  ├── (日期前7碼, 正規化地址) 已存在 → 跳過 (地址重複)
-  ├── (日期前7碼, 總價) 已存在 → 跳過 (價格重複)
-  ├── 地址缺 "號" → 丟棄 (資料缺損)
-  └── 通過 → INSERT 新記錄 (serial_no = 'api_' + sq)
-```
-
-### Phase B Enrich 欄位
-
-| 欄位 | 判空條件 | 來源 |
-|------|----------|------|
-| `lat` | NULL 或 0 | raw_json.lat |
-| `lng` | NULL 或 0 | raw_json.lon |
-| `community_name` | 空字串 | transactions.community |
-| `county_city` | 空字串 | CITY_CODE_MAP[city] |
-| `building_type` | 空字串 | raw_json.b |
-| `main_use` | 空字串 | raw_json.pu / AA11 |
+| 類別 | 欄位 |
+|------|------|
+| 地理 | lat, lng |
+| 社區 | community_name |
+| 基本 | county_city, building_type, main_use, main_material |
+| 格局 | rooms, halls, bathrooms |
+| 面積 | building_area, land_area, main_area, attached_area, balcony_area |
+| 價格 | unit_price |
+| 交易 | transaction_type, has_management, elevator |
+| 樓層 | floor_level, total_floors |
+| 停車 | parking_type, parking_area, parking_price |
+| 分區 | urban_zone |
+| 其他 | note |
 | `has_management` | 空字串 | raw_json.m |
 | `rooms` | NULL | raw_json.j |
 | `halls` | NULL | raw_json.k |
@@ -111,17 +142,18 @@ API 記錄 → 正規化地址 + 日期
 
 ## 資料來源比較
 
-| 特性 | CSV (`ALL_lvr_land_a.csv`) | API DB (`transactions_all_original.db`) |
-|------|----------------------------|-----------------------------------------|
-| 筆數 | ~470 萬 | ~420 萬 |
-| 縣市資訊 | ❌ (僅有區名) | ✅ (城市代碼 A-Z) |
-| 經緯度 | ❌ | ✅ |
-| 社區名 | ❌ | ✅ (部分) |
-| 建材/車位 | ✅ | ❌ |
-| 土地面積 | ✅ | ❌ |
-| 完整原始欄位 | ✅ (33 欄) | 部分 (raw_json 中) |
+| 特性 | CSV (`ALL_lvr_land_a.csv`) | API DB (`transactions.db`) | land_data.db |
+|------|----------------------------|----------------------------|--------------|
+| 筆數 | ~470 萬 | ~420 萬 | 合併後 ~468 萬 |
+| 縣市資訊 | ❌ (僅有區名) | ✅ (城市代碼 A-Z) | ✅ |
+| 經緯度 | ❌ | ✅ | ✅ (enriched) |
+| 社區名 | ❌ | ✅ (部分) | ✅ (enriched) |
+| 建材/車位 | ✅ | ❌ | ✅ |
+| 土地面積 | ✅ | ❌ | ✅ |
+| 完整原始欄位 | ✅ (33 欄) | 部分 (raw_json 中) | ✅ (45 欄) |
+| 可直接匯入 | ✅ | ✅ | ✅ (合併用) |
 
-合併後的 `land_data.db` 結合兩者優勢，達到最高資料完整度。
+增量匯入後的 `land_data.db` 結合所有來源優勢。
 
 ## 資料庫 Schema
 
@@ -231,17 +263,18 @@ transactions.raw_json:
   b=建物類型, note=備註, lat/lon=經緯度
 ```
 
-## 與 merge_csv_api 的對照
+## v3 → v4 變更摘要
 
-| merge_and_enrich.py | convert.py --source both |
-|---------------------|--------------------------|
-| Step 1: merge (需先有 DB) | Phase A: 去重插入 (同流程自動建) |
-| Step 2: enrich (15 欄位) | Phase B: enrich (**16 欄位**, +county_city) |
-| Step 3: backfill community | Phase C: 社區回填 (相同邏輯) |
-| `serial_no = '591_' + sq` | `serial_no = 'api_' + sq` |
-| 自己的 DISTRICT_CITY_MAP | 共用 `address_utils.py` |
-| 自己的 norm_addr / 無消歧 | 共用 `parse_address()` + `city_hint` 消歧 |
-| 需手動依序執行 3 步 | 一次 `--source both` 全部完成 |
+| 項目 | v3 (舊版) | v4 (新版) |
+|------|-----------|-----------|
+| 匯入模式 | 每次刪除舊 DB 重建 | **增量匯入** (預設保留既有資料) |
+| 來源識別 | 手動指定 `--source csv/api/both` | **自動偵測** (丟檔案即可) |
+| 支援來源 | CSV + API DB (2 種) | CSV_LVR + CSV_GENERIC + API_DB + LAND_DB (4 種) |
+| 去重方式 | 先全量 CSV 再配對 API | **統一 upsert**: 逐筆去重 + enrich |
+| enrich 欄位 | 16 個 | **26 個** (新增 land_area, parking 等) |
+| 多檔匯入 | ❌ | ✅ `convert.py a.csv b.db c.csv` |
+| 核心類別 | 無 (函式散落) | `LandDataDB` 封裝全部 DB 操作 |
+| 向後相容 | — | ✅ `--source`/`load_csv`/`load_api` 仍可用 |
 
 ## 效能
 
