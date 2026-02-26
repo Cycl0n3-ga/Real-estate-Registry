@@ -1,5 +1,16 @@
 # address_convert — 台灣實價登錄多來源資料整合工具
 
+> 最後更新：2026-02-26
+
+## 資料概況 (2026-02-26)
+
+| 資料庫 | 總筆數 | 社區名稱非空筆數 | 社區非空率 |
+|--------|-------:|----------------:|----------:|
+| `transactions_all_original.db` (API 來源) | 4,561,703 | 1,852,343 | 40.61% |
+| `land_data.db` (合併後) | 6,469,055 | 2,360,385 | 36.49% |
+
+> 社區名稱僅 API 來源有收錄，政府 CSV 不含此欄位，故整體約 60% 無社區名為預期結果。
+
 ## 概述
 
 `convert.py` (v4) 能**自動識別**任意輸入來源 (CSV / API DB / land_data.db)，清洗後**增量匯入**統一格式的 `land_data.db`。
@@ -129,35 +140,25 @@ record
 | 停車 | parking_type, parking_area, parking_price |
 | 分區 | urban_zone |
 | 其他 | note |
-| `has_management` | 空字串 | raw_json.m |
-| `rooms` | NULL | raw_json.j |
-| `halls` | NULL | raw_json.k |
-| `bathrooms` | NULL | raw_json.l |
-| `building_area` | NULL 或 0 | raw_json.s |
-| `unit_price` | NULL 或 0 | raw_json.cp |
-| `transaction_type` | 空字串 | raw_json.t |
-| `floor_level` | 空字串 | raw_json.f (解析) |
-| `total_floors` | 空字串 | raw_json.f (解析) |
-| `note` | 空字串 | raw_json.note |
 
 ## 資料來源比較
 
 | 特性 | CSV (`ALL_lvr_land_a.csv`) | API DB (`transactions.db`) | land_data.db |
 |------|----------------------------|----------------------------|--------------|
-| 筆數 | ~470 萬 | ~420 萬 | 合併後 ~468 萬 |
+| 筆數 | ~470 萬 | ~456 萬 | 合併後 ~647 萬 |
 | 縣市資訊 | ❌ (僅有區名) | ✅ (城市代碼 A-Z) | ✅ |
 | 經緯度 | ❌ | ✅ | ✅ (enriched) |
-| 社區名 | ❌ | ✅ (部分) | ✅ (enriched) |
+| 社區名 | ❌ | ✅ (非空率 40.6%) | ✅ (非空率 36.5%) |
 | 建材/車位 | ✅ | ❌ | ✅ |
 | 土地面積 | ✅ | ❌ | ✅ |
-| 完整原始欄位 | ✅ (33 欄) | 部分 (raw_json 中) | ✅ (45 欄) |
+| 完整原始欄位 | ✅ (33 欄) | 部分 (raw_json 中) | ✅ (47 欄) |
 | 可直接匯入 | ✅ | ✅ | ✅ (合併用) |
 
 增量匯入後的 `land_data.db` 結合所有來源優勢。
 
 ## 資料庫 Schema
 
-### 主表: `land_transaction` (45 欄)
+### 主表: `land_transaction` (47 欄)
 
 | # | 欄位 | 型態 | 說明 | CSV | API |
 |---|------|------|------|:---:|:---:|
@@ -207,6 +208,7 @@ record
 | 44 | `community_name` | TEXT | 社區名稱 | — | ✅ |
 | 45 | `lat` | REAL | 緯度 | — | ✅ |
 | 46 | `lng` | REAL | 經度 | — | ✅ |
+| 47 | `dedup_key` | TEXT | 去重鍵 `date7\|addr_norm\|price` | — | — |
 
 ### FTS5 全文檢索表
 

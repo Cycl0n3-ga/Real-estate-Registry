@@ -16,7 +16,8 @@
   python3 convert.py --target /path/to/land_data.db  # 指定目標 DB
 
 去重策略:
-  以 (交易日期前7碼 + 正規化地址) 或 (交易日期前7碼 + 總價) 判斷是否為同一筆交易。
+  以 (交易日期前7碼 + 正規化地址 + 總價) 三鍵判斷是否為同一筆交易。
+  同一天、同地址但不同價格視為不同交易。
     - 已存在且新資料有額外欄位 → enrich (補充)
     - 不存在 → 新增
     - 資料缺損 (無地址/無號) → 丟棄
@@ -30,11 +31,46 @@ import sys
 import argparse
 import re
 import time
+import hashlib
+import math
 from enum import Enum
 from typing import Optional, Dict, List, Tuple, Any
 
 # ── 共用模組 ──────────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+
+# 全域 verbose 旗標 (由 main() 設定)
+_VERBOSE = False
+_VERBOSE_MAX = float('inf')  # 不限制：所有範例都印出並寫入 log
+
+# 日誌檔案句柄與函式
+_LOG_FILE = None
+
+def log_print(*args, **kwargs):
+    """同時輸出到 stdout 和日誌檔案"""
+    msg = ' '.join(str(a) for a in args)
+    print(*args, **kwargs)
+    if _LOG_FILE:
+        print(msg, file=_LOG_FILE, flush=True)
+
+def init_logging(log_path: str):
+    """初始化日誌檔案"""
+    global _LOG_FILE
+    try:
+        _LOG_FILE = open(log_path, 'w', encoding='utf-8', buffering=1)
+        log_print(f'[{time.strftime("%Y-%m-%d %H:%M:%S")}] 開始匯入')
+    except Exception as e:
+        print(f'⚠️ 無法開啟日誌檔案: {e}', flush=True)
+        _LOG_FILE = None
+
+def close_logging():
+    """關閉日誌檔案"""
+    global _LOG_FILE
+    if _LOG_FILE:
+        log_print(f'[{time.strftime("%Y-%m-%d %H:%M:%S")}] 匯入完成')
+        _LOG_FILE.close()
+        _LOG_FILE = None
+
 from address_utils import (
     normalize_address,
     parse_address,
@@ -297,6 +333,50 @@ ENRICH_FIELDS = [
     ('elevator',         _EMPTY_TEXT),
 ]
 
+INSERT_DEDUP_SQL = (
+    'INSERT INTO land_transaction ('
+    + ', '.join(LAND_COLUMNS + ['dedup_key'])
+    + ') VALUES ('
+    + ', '.join(['?'] * (len(LAND_COLUMNS) + 1))
+    + ')'
+)
+
+
+class _BloomFilter:
+    """Compact bloom filter for dedup key existence checking.
+
+    For 5M items at 0.1% false-positive rate:
+      - size ≈ 72M bits ≈ 9 MB
+      - num_hashes ≈ 10
+    Memory is O(1) regardless of item count (fixed-size bytearray).
+    """
+    __slots__ = ('size', 'num_hashes', 'bits')
+
+    def __init__(self, expected_items: int = 5_000_000, fp_rate: float = 0.001):
+        self.size = int(-expected_items * math.log(fp_rate) / (math.log(2) ** 2))
+        self.num_hashes = max(1, int((self.size / expected_items) * math.log(2)))
+        self.bits = bytearray((self.size + 7) // 8)
+
+    def _hashes(self, key: str):
+        h = hashlib.md5(key.encode('utf-8')).digest()
+        h1 = int.from_bytes(h[:8], 'little')
+        h2 = int.from_bytes(h[8:], 'little')
+        size = self.size
+        for i in range(self.num_hashes):
+            yield (h1 + i * h2) % size
+
+    def add(self, key: str):
+        bits = self.bits
+        for pos in self._hashes(key):
+            bits[pos >> 3] |= (1 << (pos & 7))
+
+    def __contains__(self, key: str) -> bool:
+        bits = self.bits
+        return all(bits[pos >> 3] & (1 << (pos & 7)) for pos in self._hashes(key))
+
+    def memory_mb(self) -> float:
+        return len(self.bits) / 1024 / 1024
+
 
 class LandDataDB:
     """
@@ -313,26 +393,32 @@ class LandDataDB:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self.conn: Optional[sqlite3.Connection] = None
-        self._addr_keys: set = set()   # (date7, norm_addr) → 已存在
-        self._price_keys: set = set()  # (date7, total_price) → 已存在
-        self._id_by_addr: dict = {}    # (date7, norm_addr) → row id
-        self._id_by_price: dict = {}   # (date7, total_price) → row id
+        self._bloom = _BloomFilter(expected_items=5_000_000, fp_rate=0.001)
+        self._batch_keys: set = set()  # 當前批次的 dedup_key (bounded to BATCH_SIZE)
         self._insert_batch: list = []
         self._enrich_batch: list = []
+        self._init_stats()
+        self.BATCH_SIZE = 10000
+
+    def _init_stats(self):
         self._stats = {
             'inserted': 0, 'enriched': 0,
             'duplicated': 0, 'discarded': 0, 'total_scanned': 0,
+            'discard_no_addr': 0,
+            'discard_no_number': 0,
+            'discard_parse_err': 0,
         }
-        self.BATCH_SIZE = 10000
+        self._verbose_count = {'discarded': 0, 'enriched': 0, 'duplicated': 0}
 
-    def open(self, rebuild=False):
+    def open(self, rebuild=False, load_dedup=True):
         """
         開啟 (或建立) land_data.db。
         rebuild=True 時會刪除舊 DB 重建。
+        load_dedup=False 時跳過去重鍵載入（僅做 backfill 時使用）。
         """
         if rebuild and os.path.exists(self.db_path):
             os.remove(self.db_path)
-            print(f'  🗑  已刪除舊資料庫: {self.db_path}')
+            log_print(f'  🗑  已刪除舊資料庫: {self.db_path}')
 
         is_new = not os.path.exists(self.db_path)
         self.conn = sqlite3.connect(self.db_path)
@@ -341,20 +427,22 @@ class LandDataDB:
         # 效能設定
         cur.execute('PRAGMA journal_mode=WAL')
         cur.execute('PRAGMA synchronous=NORMAL')
-        cur.execute('PRAGMA cache_size=-200000')
+        cur.execute('PRAGMA cache_size=-64000')
         cur.execute('PRAGMA temp_store=MEMORY')
 
         self._create_tables(cur)
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_dedup_key ON land_transaction(dedup_key)')
         self.conn.commit()
 
         if is_new:
-            print(f'  ✨ 建立新資料庫: {self.db_path}')
+            log_print(f'  ✨ 建立新資料庫: {self.db_path}')
         else:
             count = cur.execute('SELECT COUNT(*) FROM land_transaction').fetchone()[0]
-            print(f'  📂 開啟既有資料庫: {self.db_path} ({count:,} 筆)')
+            log_print(f'  📂 開啟既有資料庫: {self.db_path} ({count:,} 筆)')
 
         # 載入去重鍵值
-        self._load_dedup_keys()
+        if load_dedup:
+            self._load_dedup_keys()
 
     def _create_tables(self, cursor):
         cursor.execute('''
@@ -404,32 +492,27 @@ class LandDataDB:
                 sub_number      TEXT,
                 community_name  TEXT,
                 lat             REAL,
-                lng             REAL
+                lng             REAL,
+                dedup_key       TEXT
             )
         ''')
 
     def _load_dedup_keys(self):
-        """從既有資料載入去重用的 key set + id 映射"""
+        """從既有資料載入 dedup_key 到 Bloom filter (~9 MB)"""
         cur = self.conn.cursor()
-        cur.execute(
-            'SELECT id, transaction_date, address, total_price '
-            'FROM land_transaction'
-        )
-        for row_id, date, addr, price in cur:
-            d = (date or '').replace('/', '')[:7]
-            a = strip_city(norm_addr_simple(addr or ''))
-            if a:
-                key_a = (d, a)
-                self._addr_keys.add(key_a)
-                self._id_by_addr[key_a] = row_id
-            p = parse_price(price)
-            if p and p > 0:
-                key_p = (d, p)
-                self._price_keys.add(key_p)
-                self._id_by_price[key_p] = row_id
+        # 檢查是否有 dedup_key 欄位 (向後相容)
+        cur.execute('PRAGMA table_info(land_transaction)')
+        cols = {row[1] for row in cur.fetchall()}
+        if 'dedup_key' not in cols:
+            log_print('    ⚠ 舊版 DB 無 dedup_key 欄位，跳過載入')
+            return
 
-        print(f'    去重鍵值: addr={len(self._addr_keys):,}, '
-              f'price={len(self._price_keys):,}')
+        cur.execute('SELECT dedup_key FROM land_transaction WHERE dedup_key IS NOT NULL')
+        count = 0
+        for (key,) in cur:
+            self._bloom.add(key)
+            count += 1
+        log_print(f'    Bloom filter: {count:,} 既有鍵值 (~{self._bloom.memory_mb():.1f} MB)')
 
     def upsert_record(self, rec: dict):
         """
@@ -437,71 +520,93 @@ class LandDataDB:
 
         邏輯:
           1. 檢驗資料品質 → 不合格 → discard
-          2. 計算去重 key
-          3. 已存在 → enrich (補充空欄位)
-          4. 不存在 → insert
+          2. 計算 dedup_key = "date7|addr_norm|price"
+          3. 檢查 batch_keys → bloom filter → DB
+          4. 已存在 → enrich (補充空欄位) 或 duplicate
+          5. 不存在 → insert
         """
         self._stats['total_scanned'] += 1
 
         # —— 資料品質驗證 ——
         addr = rec.get('address', '')
-        if not addr or (not re.search(r'號|地號', addr)):
+        if not addr:
             self._stats['discarded'] += 1
+            self._stats['discard_no_addr'] += 1
+            return
+        if not re.search(r'號|地號', addr):
+            self._stats['discarded'] += 1
+            self._stats['discard_no_number'] += 1
+            if _VERBOSE and self._verbose_count['discarded'] < _VERBOSE_MAX:
+                log_print(f'    [丟棄] 無號: {addr}')
+                self._verbose_count['discarded'] += 1
             return
 
-        # —— 去重 key ——
+        # —— 計算 dedup key (三鍵: 日期 + 地址 + 總價) ——
         date_str = rec.get('transaction_date', '') or ''
         d = date_str.replace('/', '')[:7]
         addr_norm = strip_city(norm_addr_simple(addr))
-        price = parse_price(rec.get('total_price'))
+        price = rec.get('total_price') or 0
+        try:
+            price = int(price)
+        except (ValueError, TypeError):
+            price = 0
 
-        # —— 檢查是否已存在 ——
-        existing_id = None
-        if addr_norm and (d, addr_norm) in self._addr_keys:
-            existing_id = self._id_by_addr.get((d, addr_norm))
-            if existing_id is None:
-                # 批次插入後尚未回填 id → 從 DB 查詢
-                existing_id = self._lookup_id_by_addr(d, addr_norm)
-        elif price and price > 0 and (d, price) in self._price_keys:
-            existing_id = self._id_by_price.get((d, price))
-            if existing_id is None:
-                existing_id = self._lookup_id_by_price(d, price)
+        if not addr_norm:
+            # 無法正規化地址 → 直接插入 (不做去重)
+            values = tuple(rec.get(col) for col in LAND_COLUMNS)
+            self._insert_batch.append((*values, None))
+            self._stats['inserted'] += 1
+            if len(self._insert_batch) >= self.BATCH_SIZE:
+                self._flush_inserts()
+            return
 
-        if existing_id:
-            # 已存在 → 嘗試 enrich
-            enriched = self._try_enrich(existing_id, rec)
-            if enriched:
-                self._stats['enriched'] += 1
-            else:
-                self._stats['duplicated'] += 1
-            return
-        elif addr_norm and (d, addr_norm) in self._addr_keys:
-            # key 存在但查不到 id (尚在 batch 中) → 視為重複
+        dedup_key = f"{d}|{addr_norm}|{price}"
+
+        # —— Level 1: 檢查當前批次 (O(1), set 最多 BATCH_SIZE 個) ——
+        if dedup_key in self._batch_keys:
             self._stats['duplicated'] += 1
+            if _VERBOSE and self._verbose_count['duplicated'] < _VERBOSE_MAX:
+                log_print(f'    [重複-batch] {dedup_key}: {addr}')
+                self._verbose_count['duplicated'] += 1
             return
-        elif price and price > 0 and (d, price) in self._price_keys:
-            self._stats['duplicated'] += 1
-            return
+
+        # —— Level 2: 檢查 Bloom filter (~9 MB, O(k)) ——
+        if dedup_key in self._bloom:
+            # Bloom filter hit → 可能是重複，查 DB 確認 (0.1% 偽陽性)
+            row = self.conn.execute(
+                'SELECT id FROM land_transaction WHERE dedup_key = ?',
+                (dedup_key,)
+            ).fetchone()
+            if row:
+                existing_id = row[0]
+                enriched_fields = self._try_enrich(existing_id, rec)
+                if enriched_fields:
+                    self._stats['enriched'] += 1
+                    if _VERBOSE and self._verbose_count['enriched'] < _VERBOSE_MAX:
+                        log_print(f'    [補充] id={existing_id} 欄位={enriched_fields}: {addr}')
+                        self._verbose_count['enriched'] += 1
+                else:
+                    self._stats['duplicated'] += 1
+                    if _VERBOSE and self._verbose_count['duplicated'] < _VERBOSE_MAX:
+                        log_print(f'    [重複] {dedup_key}: {addr}')
+                        self._verbose_count['duplicated'] += 1
+                return
+            # Bloom false positive → fall through to insert
 
         # —— 新記錄 → 插入 ——
         values = tuple(rec.get(col) for col in LAND_COLUMNS)
-        self._insert_batch.append(values)
+        self._insert_batch.append((*values, dedup_key))
+        self._batch_keys.add(dedup_key)
+        self._bloom.add(dedup_key)
         self._stats['inserted'] += 1
-
-        # 更新 key set
-        if addr_norm:
-            self._addr_keys.add((d, addr_norm))
-            # 暫存 id 會在 flush 後更新 (批次插入無法即時取得 rowid)
-        if price and price > 0:
-            self._price_keys.add((d, price))
 
         if len(self._insert_batch) >= self.BATCH_SIZE:
             self._flush_inserts()
 
-    def _try_enrich(self, row_id: int, new_rec: dict) -> bool:
+    def _try_enrich(self, row_id: int, new_rec: dict) -> list:
         """
         嘗試用新資料補充既有記錄的空欄位。
-        回傳 True 表示有更新。
+        回傳補充的欄位名列表 (空列表=沒更新)。
         """
         # 讀取既有欄位
         cols_to_check = [col for col, _ in ENRICH_FIELDS]
@@ -523,50 +628,21 @@ class LandDataDB:
                     updates[col_name] = new_val
 
         if not updates:
-            return False
+            return []
 
         self._enrich_batch.append((updates, row_id))
         if len(self._enrich_batch) >= self.BATCH_SIZE:
             self._flush_enriches()
-        return True
+        return list(updates.keys())
 
     def _flush_inserts(self):
         if not self._insert_batch:
             return
         cur = self.conn.cursor()
-        cur.executemany(INSERT_SQL, self._insert_batch)
+        cur.executemany(INSERT_DEDUP_SQL, self._insert_batch)
         self.conn.commit()
-
-        # 回填新插入記錄的 id 到映射表
-        # 取最近插入的 N 筆 id
-        last_id = cur.execute('SELECT MAX(id) FROM land_transaction').fetchone()[0]
-        if last_id:
-            start_id = last_id - len(self._insert_batch) + 1
-            rows = cur.execute(
-                'SELECT id, transaction_date, address, total_price '
-                'FROM land_transaction WHERE id >= ?', (start_id,)
-            ).fetchall()
-            for row_id, date, addr, price in rows:
-                d = (date or '').replace('/', '')[:7]
-                a = strip_city(norm_addr_simple(addr or ''))
-                if a:
-                    self._id_by_addr[(d, a)] = row_id
-                p = parse_price(price)
-                if p and p > 0:
-                    self._id_by_price[(d, p)] = row_id
-
         self._insert_batch = []
-
-    def _lookup_id_by_addr(self, d: str, addr_norm: str) -> Optional[int]:
-        """從 DB 查詢符合地址+日期的 row id"""
-        # 先 flush 以確保資料已寫入
-        self._flush_inserts()
-        return self._id_by_addr.get((d, addr_norm))
-
-    def _lookup_id_by_price(self, d: str, price: int) -> Optional[int]:
-        """從 DB 查詢符合日期+總價的 row id"""
-        self._flush_inserts()
-        return self._id_by_price.get((d, price))
+        self._batch_keys.clear()
 
     def _flush_enriches(self):
         if not self._enrich_batch:
@@ -589,8 +665,13 @@ class LandDataDB:
 
     def backfill_community(self, api_db_path: str):
         """
-        從 API DB 回填 community_name (Phase C)。
-        建立 (county_city, district, road+號) → community 映射。
+        從 API DB 回填 community_name。
+
+        演算法（O(N) 單次掃描，不用 LIKE）:
+          Phase 1: 從 API DB 建立 地址鍵值(去縣市+去樓層+半形) → community 映射
+          Phase 2: 掃描 land_transaction，對無社區記錄做 Python dict 比對
+                   → batch UPDATE
+          ※ 全形/半形地址統一在 Python 正規化後比對，不再依賴 SQL LIKE
         """
         if not os.path.exists(api_db_path):
             return 0
@@ -604,44 +685,50 @@ class LandDataDB:
         ).fetchall()
         conn_t.close()
 
-        mapping = {}
-        for city_code, addr_raw, community in rows:
-            addr = norm_addr_simple(clean_trans_addr(addr_raw))
-            short = strip_city(addr)
-            m = re.match(r'^(.{1,4}?[區鎮鄉市])', short)
-            if not m:
+        # Phase 1: addr_key → {community: vote_count}
+        # addr_key = 去縣市 + 去樓層 + 半形正規化
+        votes: dict = {}
+        for _city_code, addr_raw, community in rows:
+            addr = strip_floor(strip_city(norm_addr_simple(clean_trans_addr(addr_raw))))
+            if not addr or '號' not in addr:
                 continue
-            district = m.group(1)
-            rest = short[len(district):] if short.startswith(district) else short
-            pos = rest.find('號')
-            if pos < 0:
-                continue
-            road_number = rest[:pos + 1]
-            county_city = CITY_CODE_MAP.get(city_code, '')
-            key = (county_city, district, road_number)
-            if key not in mapping:
-                mapping[key] = {}
-            mapping[key][community] = mapping[key].get(community, 0) + 1
+            bucket = votes.setdefault(addr, {})
+            bucket[community] = bucket.get(community, 0) + 1
 
-        comm_map = {k: max(v, key=v.get) for k, v in mapping.items()}
-        print(f'    社區映射: {len(comm_map):,} 個門牌', flush=True)
+        comm_map = {addr: max(v, key=v.get) for addr, v in votes.items()}
+        print(f'    社區映射: {len(comm_map):,} 個地址鍵值', flush=True)
 
+        # Phase 2: 單次掃描，比對無社區的記錄
+        cur = self.conn.cursor()
+        updates: list = []
         updated = 0
-        self.conn.execute('BEGIN')
-        for i, ((county_city, district, road_number), community) in \
-                enumerate(comm_map.items()):
-            pattern = f'%{district}{road_number}%'
-            cur = self.conn.execute(
-                "UPDATE land_transaction SET community_name = ? "
-                "WHERE district = ? AND address LIKE ? "
-                "AND (community_name IS NULL OR community_name = '')",
-                (community, district, pattern)
+
+        for row_id, addr in cur.execute(
+            "SELECT id, address FROM land_transaction "
+            "WHERE community_name IS NULL OR community_name = ''"
+        ):
+            # 全形→半形正規化後比對，解決 CSV 全形與 API 半形不一致的問題
+            norm = strip_floor(strip_city(norm_addr_simple(addr or '')))
+            community = comm_map.get(norm)
+            if community:
+                updates.append((community, row_id))
+                if len(updates) >= 5000:
+                    self.conn.executemany(
+                        "UPDATE land_transaction SET community_name = ? WHERE id = ?",
+                        updates
+                    )
+                    self.conn.commit()
+                    updated += len(updates)
+                    updates = []
+
+        if updates:
+            self.conn.executemany(
+                "UPDATE land_transaction SET community_name = ? WHERE id = ?",
+                updates
             )
-            updated += cur.rowcount
-            if (i + 1) % 500 == 0:
-                self.conn.execute('COMMIT')
-                self.conn.execute('BEGIN')
-        self.conn.execute('COMMIT')
+            self.conn.commit()
+            updated += len(updates)
+
         return updated
 
     def finalize(self):
@@ -650,7 +737,7 @@ class LandDataDB:
         cur = self.conn.cursor()
 
         # 索引
-        print('  📇 建立索引...')
+        log_print('  📇 建立索引...')
         indexes = [
             ('idx_county_city', 'county_city'),
             ('idx_district', 'district'),
@@ -661,15 +748,20 @@ class LandDataDB:
             ('idx_date', 'transaction_date'),
             ('idx_price', 'total_price'),
             ('idx_serial', 'serial_no'),
+            ('idx_dedup_key', 'dedup_key'),
         ]
         for name, col in indexes:
             cur.execute(f'CREATE INDEX IF NOT EXISTS {name} ON land_transaction({col})')
         cur.execute('''CREATE INDEX IF NOT EXISTS idx_addr_combo
             ON land_transaction(county_city, district, street, lane, number)''')
+        # com2address 查詢用索引
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_community_address ON land_transaction(community_name, address) WHERE community_name IS NOT NULL AND address IS NOT NULL')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_street_lane_district ON land_transaction(street, lane, district)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_search_numbers ON land_transaction(street, lane, district, total_floors, build_date) WHERE number IS NOT NULL')
         self.conn.commit()
 
         # FTS5
-        print('  🔍 建立 FTS5 全文檢索...')
+        log_print('  🔍 建立 FTS5 全文檢索...')
         cur.execute('DROP TABLE IF EXISTS address_fts')
         cur.execute('''
             CREATE VIRTUAL TABLE address_fts USING fts5(
@@ -686,12 +778,12 @@ class LandDataDB:
         self.conn.commit()
 
         # ANALYZE
-        print('  📊 更新統計資訊...')
+        log_print('  📊 更新統計資訊...')
         self.conn.execute('ANALYZE')
         self.conn.commit()
 
         # VACUUM
-        print('  🗜  壓縮資料庫...')
+        log_print('  🗜  壓縮資料庫...')
         self.conn.execute('PRAGMA journal_mode=DELETE')
         self.conn.commit()
         self.conn.execute('VACUUM')
@@ -723,12 +815,28 @@ class LandDataDB:
         pct = lambda n: n / total * 100 if total else 0
         db_size = os.path.getsize(self.db_path) / 1024 / 1024
 
-        print(f'\n📊 本次匯入統計:')
-        print(f'  掃描:    {s["total_scanned"]:,}')
-        print(f'  新增:    {s["inserted"]:,}')
-        print(f'  補充:    {s["enriched"]:,}')
-        print(f'  重複:    {s["duplicated"]:,}')
-        print(f'  丟棄:    {s["discarded"]:,}')
+        log_print(f'\n📊 本次匯入統計:')
+        log_print(f'  掃描:    {s["total_scanned"]:,}')
+        log_print(f'  新增:    {s["inserted"]:,}')
+        log_print(f'  補充:    {s["enriched"]:,}')
+        log_print(f'  重複:    {s["duplicated"]:,}')
+        log_print(f'  丟棄:    {s["discarded"]:,}'
+              + (f'  (無地址={s["discard_no_addr"]:,} / 缺號={s["discard_no_number"]:,} / 例外={s["discard_parse_err"]:,})'
+                 if s['discarded'] else ''))
+        if _VERBOSE:
+            log_print(f'  (verbose 樣本已在上方即時輸出，共印出: '
+                      f'丟棄={self._verbose_count["discarded"]} '
+                      f'補充={self._verbose_count["enriched"]} '
+                      f'重複={self._verbose_count["duplicated"]})')
+        
+        # 最後顯示資料庫總覽
+        log_print(f'\n📦 資料庫總覽:')
+        log_print(f'  總筆數:        {total:,}')
+        log_print(f'  有縣市名:      {has_city:,} ({pct(has_city):.1f}%)')
+        log_print(f'  地址解析成功:  {has_street:,} ({pct(has_street):.1f}%)')
+        log_print(f'  有經緯度:      {has_geo:,} ({pct(has_geo):.1f}%)')
+        log_print(f'  有社區名:      {has_comm:,} ({pct(has_comm):.1f}%)')
+        log_print(f'  資料庫大小:    {db_size:.1f} MB')
         print(f'\n📦 資料庫總覽:')
         print(f'  總筆數:        {total:,}')
         print(f'  有縣市名:      {has_city:,} ({pct(has_city):.1f}%)')
@@ -739,10 +847,7 @@ class LandDataDB:
 
     def reset_stats(self):
         """重置本次統計 (多檔匯入時可在每檔之間呼叫)"""
-        self._stats = {
-            'inserted': 0, 'enriched': 0,
-            'duplicated': 0, 'discarded': 0, 'total_scanned': 0,
-        }
+        self._init_stats()
 
     def close(self):
         if self.conn:
@@ -1041,7 +1146,7 @@ def _build_generic_csv_map(headers: list) -> dict:
 
 def import_csv_lvr(db: LandDataDB, csv_path: str):
     """匯入 LVR 實價登錄 CSV"""
-    print(f'\n📄 [CSV-LVR] 匯入: {csv_path}')
+    log_print(f'\n📄 [CSV-LVR] 匯入: {csv_path}')
     t0 = time.time()
 
     with open(csv_path, 'r', encoding='utf-8-sig') as f:
@@ -1054,24 +1159,24 @@ def import_csv_lvr(db: LandDataDB, csv_path: str):
             if rec:
                 db.upsert_record(rec)
 
-            if i % 50000 == 0:
+            if i % 10000 == 0:
                 db.flush_all()
                 elapsed = time.time() - t0
                 rate = i / elapsed if elapsed > 0 else 0
                 s = db._stats
-                print(f'\r  ⏳ 掃描 {i:,} | 新增 {s["inserted"]:,} | '
+                log_print(f'  ⏳ {i:,} 筆 | 新增 {s["inserted"]:,} | '
                       f'補充 {s["enriched"]:,} | 重複 {s["duplicated"]:,} | '
                       f'丟棄 {s["discarded"]:,} ({rate:,.0f}/s)',
-                      end='', flush=True)
+                      flush=True)
 
     db.flush_all()
     elapsed = time.time() - t0
-    print(f'\n  ✅ CSV-LVR 完成: {elapsed:.1f}s')
+    log_print(f'  ✅ CSV-LVR 完成: {elapsed:.1f}s')
 
 
 def import_csv_generic(db: LandDataDB, csv_path: str):
     """匯入通用 CSV"""
-    print(f'\n📄 [CSV-Generic] 匯入: {csv_path}')
+    log_print(f'\n📄 [CSV-Generic] 匯入: {csv_path}')
     t0 = time.time()
 
     with open(csv_path, 'r', encoding='utf-8-sig') as f:
@@ -1080,34 +1185,35 @@ def import_csv_generic(db: LandDataDB, csv_path: str):
         header_map = _build_generic_csv_map(headers)
 
         if not header_map.get('_indices'):
-            print(f'  ⚠️  無法識別欄位映射，跳過此檔案')
-            print(f'     偵測到的欄位: {headers[:10]}...')
+            log_print(f'  ⚠️  無法識別欄位映射，跳過此檔案')
+            log_print(f'     偵測到的欄位: {headers[:10]}...')
             return
 
         mapped = {k: v for k, v in header_map.items() if k != '_indices'}
-        print(f'  欄位映射: {mapped}')
+        log_print(f'  欄位映射: {mapped}')
 
         for i, row in enumerate(reader, 1):
             rec = _parse_generic_csv_row(row, header_map)
             if rec:
                 db.upsert_record(rec)
 
-            if i % 50000 == 0:
+            if i % 10000 == 0:
                 db.flush_all()
                 elapsed = time.time() - t0
                 s = db._stats
-                print(f'\r  ⏳ 掃描 {i:,} | 新增 {s["inserted"]:,} | '
-                      f'補充 {s["enriched"]:,} ({elapsed:.0f}s)',
-                      end='', flush=True)
+                log_print(f'  ⏳ {i:,} 筆 | 新增 {s["inserted"]:,} | '
+                      f'補充 {s["enriched"]:,} | 重複 {s["duplicated"]:,} | '
+                      f'丟棄 {s["discarded"]:,} ({elapsed:.0f}s)',
+                      flush=True)
 
     db.flush_all()
     elapsed = time.time() - t0
-    print(f'\n  ✅ CSV-Generic 完成: {elapsed:.1f}s')
+    log_print(f'  ✅ CSV-Generic 完成: {elapsed:.1f}s')
 
 
 def import_api_db(db: LandDataDB, api_db_path: str):
     """匯入 API transactions DB"""
-    print(f'\n🌐 [API-DB] 匯入: {api_db_path}')
+    log_print(f'\n🌐 [API-DB] 匯入: {api_db_path}')
     t0 = time.time()
 
     conn_t = sqlite3.connect(api_db_path)
@@ -1129,22 +1235,23 @@ def import_api_db(db: LandDataDB, api_db_path: str):
             db.upsert_record(rec)
         else:
             db._stats['discarded'] += 1
+            db._stats['discard_parse_err'] += 1
             db._stats['total_scanned'] += 1
 
-        if i % 50000 == 0:
+        if i % 10000 == 0:
             db.flush_all()
             elapsed = time.time() - t0
             rate = i / elapsed if elapsed > 0 else 0
             s = db._stats
-            print(f'\r  ⏳ 掃描 {i:,} | 新增 {s["inserted"]:,} | '
+            log_print(f'  ⏳ {i:,} 筆 | 新增 {s["inserted"]:,} | '
                   f'補充 {s["enriched"]:,} | 重複 {s["duplicated"]:,} | '
                   f'丟棄 {s["discarded"]:,} ({rate:,.0f}/s)',
-                  end='', flush=True)
+                  flush=True)
 
     db.flush_all()
     conn_t.close()
     elapsed = time.time() - t0
-    print(f'\n  ✅ API-DB 完成: {elapsed:.1f}s')
+    log_print(f'  ✅ API-DB 完成: {elapsed:.1f}s')
 
 
 def import_land_db(db: LandDataDB, source_db_path: str):
@@ -1173,18 +1280,19 @@ def import_land_db(db: LandDataDB, source_db_path: str):
             db._stats['discarded'] += 1
             db._stats['total_scanned'] += 1
 
-        if i % 50000 == 0:
+        if i % 10000 == 0:
             db.flush_all()
             elapsed = time.time() - t0
             s = db._stats
-            print(f'\r  ⏳ 掃描 {i:,} | 新增 {s["inserted"]:,} | '
-                  f'補充 {s["enriched"]:,} | 重複 {s["duplicated"]:,} ({elapsed:.0f}s)',
-                  end='', flush=True)
+            print(f'  ⏳ {i:,} 筆 | 新增 {s["inserted"]:,} | '
+                  f'補充 {s["enriched"]:,} | 重複 {s["duplicated"]:,} | '
+                  f'丟棄 {s["discarded"]:,} ({elapsed:.0f}s)',
+                  flush=True)
 
     db.flush_all()
     conn_s.close()
     elapsed = time.time() - t0
-    print(f'\n  ✅ LAND-DB 完成: {elapsed:.1f}s')
+    print(f'  ✅ LAND-DB 完成: {elapsed:.1f}s')
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1196,11 +1304,11 @@ def import_file(db: LandDataDB, filepath: str):
     自動偵測並匯入單一檔案。
     """
     if not os.path.exists(filepath):
-        print(f'  ❌ 檔案不存在: {filepath}')
+        log_print(f'  ❌ 檔案不存在: {filepath}')
         return
 
     source_type = detect_source(filepath)
-    print(f'  🔍 偵測到來源類型: {source_type.value}')
+    log_print(f'  🔍 偵測到來源類型: {source_type.value}')
 
     if source_type == SourceType.CSV_LVR:
         import_csv_lvr(db, filepath)
@@ -1213,16 +1321,17 @@ def import_file(db: LandDataDB, filepath: str):
         target_real = os.path.realpath(db.db_path)
         source_real = os.path.realpath(filepath)
         if target_real == source_real:
-            print(f'  ⚠️  來源與目標是同一個檔案，跳過')
+            log_print(f'  ⚠️  來源與目標是同一個檔案，跳過')
             return
         import_land_db(db, filepath)
     else:
-        print(f'  ❌ 無法識別的資料來源格式: {filepath}')
+        log_print(f'  ❌ 無法識別的資料來源格式: {filepath}')
         return
 
 
 def convert_v4(input_files: List[str], target_path: str,
-               rebuild: bool = False, skip_finalize: bool = False):
+               rebuild: bool = False, skip_finalize: bool = False,
+               verbose: bool = False):
     """
     主要轉換流程 (v4)。
 
@@ -1232,13 +1341,22 @@ def convert_v4(input_files: List[str], target_path: str,
         rebuild:        是否重建 (刪除舊 DB)
         skip_finalize:  跳過索引/FTS/VACUUM (多批匯入時最後再做)
     """
-    print(f'\n{"=" * 60}')
-    print(f'  目標:  {target_path}')
-    print(f'  模式:  {"重建" if rebuild else "增量匯入"}')
-    print(f'  輸入:  {len(input_files)} 個檔案')
+    global _VERBOSE
+    _VERBOSE = verbose
+
+    log_path = os.path.join(os.path.dirname(target_path), 'land_data_import.log')
+    init_logging(log_path)
+
+    log_print(f'\n{"=" * 60}')
+    log_print(f'  目標:  {target_path}')
+    log_print(f'  模式:  {"重建" if rebuild else "增量匯入"}')
+    log_print(f'  輸入:  {len(input_files)} 個檔案')
     for f in input_files:
-        print(f'         • {f}')
-    print(f'{"=" * 60}')
+        log_print(f'         • {f}')
+    log_print(f'  Verbose 模式: {verbose} (全域 _VERBOSE={_VERBOSE})')
+    if _VERBOSE:
+        log_print(f'  詳細log: 開啟 (每種類型前 {_VERBOSE_MAX} 筆範例)')
+    log_print(f'{"=" * 60}')
 
     db = LandDataDB(target_path)
     db.open(rebuild=rebuild)
@@ -1251,6 +1369,8 @@ def convert_v4(input_files: List[str], target_path: str,
     for filepath in input_files:
         db.reset_stats()
         import_file(db, filepath)
+        # 確保 flush all samples before printing stats
+        db.flush_all()
         db.print_stats()
 
         # 記下 API DB 路徑供社區回填
@@ -1262,19 +1382,22 @@ def convert_v4(input_files: List[str], target_path: str,
     for api_path in api_db_files:
         t_bf = time.time()
         bf_count = db.backfill_community(api_path)
-        print(f'  ✅ 社區回填: {bf_count:,} 筆 ({time.time() - t_bf:.1f}s)')
+        log_print(f'  ✅ 社區回填: {bf_count:,} 筆 ({time.time() - t_bf:.1f}s)')
 
     # 索引/FTS/壓縮
     if not skip_finalize:
         db.finalize()
 
     elapsed = time.time() - t0
-    print(f'\n🎉 全部完成! 耗時 {elapsed:.1f}s')
+    log_print(f'\n🎉 全部完成! 耗時 {elapsed:.1f}s')
 
     # 最終總覽
     db.reset_stats()
     db.print_stats()
     db.close()
+    
+    close_logging()
+    log_print(f'📝 日誌已保存: {log_path}')
 
 
 # ── 向後相容: 舊版 v3 API ─────────────────────────────────────────────────────
@@ -1394,6 +1517,10 @@ def create_indexes(cursor):
         cursor.execute(f'CREATE INDEX IF NOT EXISTS {name} ON land_transaction({col})')
     cursor.execute('''CREATE INDEX IF NOT EXISTS idx_addr_combo
         ON land_transaction(county_city, district, street, lane, number)''')
+    # com2address 查詢用索引
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_community_address ON land_transaction(community_name, address) WHERE community_name IS NOT NULL AND address IS NOT NULL')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_street_lane_district ON land_transaction(street, lane, district)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_search_numbers ON land_transaction(street, lane, district, total_floors, build_date) WHERE number IS NOT NULL')
 
 
 def create_fts(cursor):
@@ -1457,6 +1584,8 @@ def main():
                         help='重建模式: 刪除舊 DB 重新匯入')
     parser.add_argument('--skip-finalize', action='store_true',
                         help='跳過建索引/FTS/VACUUM (多批時最後再做)')
+    parser.add_argument('--verbose', '-v', action='store_true',
+                        help='詳細 log: 顯示丟棄/補充/重複的範例記錄')
 
     # 向後相容參數
     parser.add_argument('--source', '-s',
@@ -1498,7 +1627,7 @@ def main():
             input_files.append(api_path)
 
         # 向後相容: --source 模式預設 rebuild
-        convert_v4(input_files, target_path, rebuild=True)
+        convert_v4(input_files, target_path, rebuild=True, verbose=args.verbose)
         return
 
     # —— 新版模式: positional inputs ——
@@ -1515,7 +1644,7 @@ def main():
             print('❌ 找不到預設輸入檔案，請指定輸入路徑')
             parser.print_help()
             sys.exit(1)
-        convert_v4(input_files, target_path, rebuild=True)
+        convert_v4(input_files, target_path, rebuild=True, verbose=args.verbose)
     else:
         # 有明確 inputs → 增量匯入 (除非 --rebuild)
         for f in args.inputs:
@@ -1524,7 +1653,8 @@ def main():
                 sys.exit(1)
         convert_v4(args.inputs, target_path,
                    rebuild=args.rebuild,
-                   skip_finalize=args.skip_finalize)
+                   skip_finalize=args.skip_finalize,
+                   verbose=args.verbose)
 
 
 if __name__ == '__main__':

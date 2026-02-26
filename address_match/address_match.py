@@ -533,7 +533,7 @@ def print_results(result, show_variants=True):
     # 表格輸出
     try:
         from tabulate import tabulate
-        headers = ['#', '行政區', '地址', '日期', '樓層', '型態',
+        headers = ['#', '行政區', '地址', '社區', '日期', '樓層', '型態',
                    '總價', '單坪萬', '坪數', '公設%', '格局', '車位', '備註']
         table_data = []
         for i, r in enumerate(rows, 1):
@@ -551,8 +551,10 @@ def print_results(result, show_variants=True):
             unit_p = f"{r['unit_price_per_ping']:.1f}" if r.get('unit_price_per_ping') else '-'
             ping = f"{r['ping']:.1f}" if r.get('ping') else '-'
             dist = r.get('district') or r.get('raw_district') or ''
+            community = (r.get('community_name') or '')[:10] or '-'
             table_data.append([
                 i, dist, format_address(r)[:30],
+                community,
                 format_date(r.get('transaction_date')),
                 (r.get('floor_level') or '-')[:6],
                 btype[:8],
@@ -563,7 +565,7 @@ def print_results(result, show_variants=True):
             ])
         print(tabulate(table_data, headers=headers, tablefmt='simple'))
     except ImportError:
-        header = f"{'#':>4}  {'行政區':6}  {'地址':<30}  {'日期':9}  {'總價':>8}  {'單坪萬':>6}  {'坪數':>6}  {'公設%':>5}  {'格局':8}"
+        header = f"{'#':>4}  {'行政區':6}  {'地址':<30}  {'社區':<10}  {'日期':9}  {'總價':>8}  {'單坪萬':>6}  {'坪數':>6}  {'公設%':>5}  {'格局':8}"
         print(header)
         print('─' * len(header))
         for i, r in enumerate(rows, 1):
@@ -575,9 +577,11 @@ def print_results(result, show_variants=True):
             unit_p = f"{r['unit_price_per_ping']:.1f}" if r.get('unit_price_per_ping') else '-'
             ping = f"{r['ping']:.1f}" if r.get('ping') else '-'
             dist = r.get('district') or r.get('raw_district') or ''
+            community = (r.get('community_name') or '')[:10] or '-'
             print(
                 f"{i:>4}  {dist:<6}  "
                 f"{format_address(r)[:30]:<30}  "
+                f"{community:<10}  "
                 f"{format_date(r.get('transaction_date')):9}  "
                 f"{format_price(r.get('total_price')):>8}  "
                 f"{unit_p:>6}  {ping:>6}  {pub_r:>5}  {layout or '-':8}"
