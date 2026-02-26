@@ -777,9 +777,8 @@ class LandDataDB:
         if enrich_candidates:
             self._process_enrich_records(enrich_candidates)
 
-        # 避免 batch_keys 無限成長
-        if len(self._batch_keys) > 100000:
-            self._batch_keys.clear()
+        # 每次呼叫後清除 batch_keys，確保跨批次重複走 bloom → DB → enrich
+        self._batch_keys.clear()
 
     def fast_insert_tuples(self, tuples_list):
         """
@@ -838,8 +837,9 @@ class LandDataDB:
         if enrich_candidates:
             self._process_enrich_tuples(enrich_candidates)
 
-        if len(self._batch_keys) > 100000:
-            self._batch_keys.clear()
+        # 每次呼叫後清除 batch_keys，確保跨批次重複走 bloom → DB → enrich
+        # (同批次內的去重已在上方 loop 完成)
+        self._batch_keys.clear()
 
     # ------------------------------------------------------------------
     # enrich 處理 (bloom hit 後查 DB 確認)
