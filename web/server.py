@@ -158,17 +158,11 @@ geocoder_ready = False
 
 
 def init_com2addr():
-    """背景初始化 com2address 查詢引擎"""
-    global com2addr_engine, com2addr_ready
-    try:
-        print("🏘️  載入 com2address 查詢引擎...")
-        com2addr_engine = Community2AddressLookup(verbose=False, use_591=False)
-        com2addr_ready = True
-        print("✅ com2address 就緒")
-    except Exception as e:
-        print(f"⚠️  com2address 載入失敗: {e}")
-        import traceback; traceback.print_exc()
-        com2addr_ready = True
+    """背景初始化 com2address 查詢引擎 - 已禁用，因為太慢且有線程問題"""
+    global com2addr_ready
+    com2addr_ready = True
+    print("⏭️  com2address 初始化已跳過（線程問題+性能影響）")
+    print("   將使用 address_match + 直查 DB 替代")
 
 
 def init_geocoder():
@@ -489,66 +483,32 @@ def api_search():
 
     search_type = "address"
     community_name = None
-    matched_community_name = None  # DB 中的精確建案名（用於直查）
-
-    # ── Step 1: 嘗試用 com2address（是否為建案名稱？）──
-    if com2addr_ready and com2addr_engine:
-        try:
-            com_result = com2addr_engine.query(keyword, top_n=5)
-            if com_result.get("found") and com_result.get("match_type") != "未找到":
-                mt = com_result.get("match_type", "")
-                tx_count = com_result.get("transaction_count", 0) or 0
-                # 精確匹配且有足夠交易量，或模糊匹配分數高
-                if "精確" in mt and tx_count >= 2:
-                    search_type = "community"
-                    community_name = com_result.get("matched_name", keyword)
-                    matched_community_name = community_name
-                    print(f"🏘️  建案搜尋: {keyword} → {community_name} ({tx_count} 筆)")
-                elif "精確" not in mt:
-                    # 模糊匹配：找交易量最多的候選
-                    candidates = com_result.get("candidates", [])
-                    best = max(candidates, key=lambda x: x.get("tx_count", 0), default=None)
-                    if best and best.get("tx_count", 0) >= 2:
-                        search_type = "community"
-                        community_name = best["name"]
-                        matched_community_name = community_name
-                        print(f"🏘️  建案模糊搜尋: {keyword} → {community_name} ({best['tx_count']} 筆)")
-        except Exception as e:
-            print(f"⚠️  com2address 查詢錯誤: {e}")
-
-    # ── Step 2: 嘗試 address2community（輸入是地址時反查建案）──
-    if search_type == "address":
-        try:
-            a2c_result = addr2com_lookup(keyword)
-            if a2c_result and isinstance(a2c_result, dict):
-                best_name = a2c_result.get("best", "")
-                if not best_name and a2c_result.get("results"):
-                    for r in a2c_result["results"]:
-                        if isinstance(r, dict) and r.get("community"):
-                            best_name = r["community"]
-                            break
-                if best_name:
-                    print(f"📍 地址→建案: {keyword} → {best_name}")
-                    community_name = best_name
-                    matched_community_name = best_name
-                    search_type = "address_to_community"
-        except Exception as e:
-            print(f"⚠️  address2community 查詢錯誤: {e}")
-
-    # ── Step 3: 搜尋房價 ──
+    
+    # ── 步驟 1: 先嘗試直接查詢 community_name（最快） ──
+    print(f"🔍 搜尋: {keyword}")
     all_transactions = []
-
-    # 若有建案名稱，直接用 community_name 查 DB（最快、最準確）
-    if matched_community_name:
-        try:
-            all_transactions = _search_by_community_name(
-                matched_community_name, filters=filters, limit=limit
-            )
-            print(f"   → community_name 直查: {len(all_transactions)} 筆")
-        except Exception as e:
-            print(f"  ⚠️  community 直查失敗: {e}")
-
-    # fallback: 直接用關鍵字搜 address_match
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # 直接查詢社區名稱
+        cursor.execute(
+            "SELECT * FROM land_transaction WHERE community_name = ? LIMIT ?",
+            (keyword, limit)
+        )
+        rows = cursor.fetchall()
+        if rows:
+            all_transactions = [format_tx_row(dict(r)) for r in rows]
+            search_type = "community"
+            community_name = keyword
+            print(f"   ✅ community_name 直查: {len(all_transactions)} 筆")
+        
+        conn.close()
+    except Exception as e:
+        print(f"   ⚠️  community_name 查詢失敗: {e}")
+    
+    # ── 步驟 2: 若community_name直查無結果，使用address_match搜尋（備選） ──
     if not all_transactions:
         try:
             result = search_address(
@@ -557,8 +517,10 @@ def api_search():
                 limit=limit, show_sql=False
             )
             all_transactions = [format_tx_row(r) for r in result.get("results", [])]
-            if not community_name:
-                search_type = "address"
+            if all_transactions:
+                print(f"   ✅ address_match 找到 {len(all_transactions)} 筆")
+            else:
+                print(f"   ❌ address_match 找到 0 筆")
         except Exception as e:
             print(f"⚠️  address_search 錯誤: {e}")
             return jsonify({"success": False, "error": str(e)}), 500

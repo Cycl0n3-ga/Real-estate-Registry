@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>良富居地產</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.1/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.1/dist/MarkerCluster.Default.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.1/dist/leaflet.markercluster.js"></script>
+<style>
+/* ========== 全域 ========== */
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --primary:#1a73e8;--primary-dark:#1558b0;--bg:#f5f7fa;
+  --card:#fff;--text:#222;--text2:#555;--border:#ddd;
+  --green:#34a853;--red:#ea4335;--orange:#f9ab00;
+  --sidebar-w:420px;--header-h:54px;
+}
+html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;background:var(--bg);color:var(--text)}
+
+/* ========== HEADER ========== */
+.header{
+  position:fixed;top:0;left:0;right:0;height:var(--header-h);
+  background:var(--primary);color:#fff;display:flex;align-items:center;
+  padding:0 16px;z-index:1100;gap:12px;
+}
+.header .logo{font-size:20px;font-weight:700;white-space:nowrap}
+.header .unit-toggle{
+  margin-left:auto;display:flex;gap:4px;background:rgba(255,255,255,.15);
+  border-radius:20px;padding:2px;
+}
+.header .unit-toggle button{
+  border:none;background:transparent;color:rgba(255,255,255,.7);
+  padding:5px 14px;border-radius:18px;cursor:pointer;font-size:13px;
+  transition:.2s;
+}
+.header .unit-toggle button.active{background:#fff;color:var(--primary);font-weight:600}
+.hamburger{display:none;background:none;border:none;color:#fff;font-size:24px;cursor:pointer}
+
+/* ========== SIDEBAR ========== */
+.sidebar{
+  position:fixed;top:var(--header-h);left:0;bottom:0;
+  width:var(--sidebar-w);background:var(--card);
+  border-right:1px solid var(--border);z-index:1050;
+  display:flex;flex-direction:column;overflow:hidden;
+  transition:transform .3s;
+}
+.sidebar.collapsed{transform:translateX(-100%)}
+
+/* Search bar */
+.search-box{padding:12px;border-bottom:1px solid var(--border);background:#fafbfc}
+.search-row{display:flex;gap:6px}
+.search-row input{
+  flex:1;padding:9px 12px;border:1px solid var(--border);border-radius:8px;
+  font-size:14px;outline:none;
+}
+.search-row input:focus{border-color:var(--primary)}
+.search-row button{
+  padding:9px 18px;background:var(--primary);color:#fff;border:none;
+  border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;
+  white-space:nowrap;transition:.2s;
+}
+.search-row button:hover{background:var(--primary-dark)}
+
+/* Filters */
+.filter-toggle{
+  display:flex;align-items:center;gap:6px;margin-top:8px;
+  font-size:12px;color:var(--primary);cursor:pointer;user-select:none;
+}
+.filter-toggle:hover{text-decoration:underline}
+.filter-panel{
+  display:none;margin-top:8px;gap:6px;
+  grid-template-columns:1fr 1fr;
+}
+.filter-panel.show{display:grid}
+.filter-panel label{font-size:11px;color:var(--text2);margin-bottom:2px;display:block}
+.filter-panel input,.filter-panel select{
+  width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;
+  font-size:12px;
+}
+.filter-panel .full-row{grid-column:1/-1}
+.filter-btns{
+  grid-column:1/-1;display:flex;gap:6px;margin-top:4px;
+}
+.filter-btns button{
+  flex:1;padding:6px;border-radius:6px;border:1px solid var(--border);
+  font-size:12px;cursor:pointer;transition:.2s;
+}
+.filter-btns .btn-apply{background:var(--primary);color:#fff;border-color:var(--primary)}
+.filter-btns .btn-clear{background:#fff;color:var(--text2)}
+
+/* Sort bar */
+.sort-bar{
+  display:flex;gap:2px;padding:8px 12px;border-bottom:1px solid var(--border);
+  background:#fafbfc;flex-wrap:wrap;
+}
+.sort-bar button{
+  padding:4px 10px;font-size:11px;border:1px solid var(--border);
+  border-radius:14px;background:#fff;cursor:pointer;transition:.2s;
+  color:var(--text2);
+}
+.sort-bar button.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+.sort-bar .limit-select{
+  margin-left:auto;padding:4px 8px;font-size:11px;
+  border:1px solid var(--border);border-radius:14px;
+  background:#fff;color:var(--text2);cursor:pointer;
+  outline:none;
+}
+
+/* Summary */
+.summary-bar{
+  padding:10px 12px;border-bottom:1px solid var(--border);background:#f0f6ff;
+  font-size:12px;color:var(--text2);display:none;line-height:1.8;
+}
+.summary-bar .val{font-weight:700;color:var(--text)}
+
+/* Results list */
+.results{flex:1;overflow-y:auto;padding:0}
+.results .empty{padding:40px 20px;text-align:center;color:var(--text2);font-size:14px}
+.results .loading{padding:40px 20px;text-align:center;color:var(--text2)}
+
+.tx-card{
+  padding:12px;border-bottom:1px solid #eee;cursor:pointer;
+  transition:background .15s;
+}
+.tx-card:hover{background:#f0f6ff}
+.tx-card.active{background:#e3f0ff;border-left:3px solid var(--primary)}
+.tx-addr{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tx-meta{font-size:11px;color:var(--text2);display:flex;flex-wrap:wrap;gap:6px 12px}
+.tx-meta .tag{
+  display:inline-block;padding:1px 6px;background:#eef3ff;border-radius:10px;
+  font-size:10px;color:var(--primary);
+}
+.tx-price{
+  font-size:15px;font-weight:700;color:var(--red);margin-top:4px;
+}
+.tx-unit{font-size:12px;color:var(--text2);font-weight:400}
+.community-badge{
+  display:inline-block;padding:3px 10px;background:#e8f5e9;color:#2e7d32;
+  border-radius:12px;font-size:12px;font-weight:600;margin-bottom:6px;
+}
+
+/* ========== MAP ========== */
+.map-wrap{
+  position:fixed;top:var(--header-h);bottom:0;
+  left:var(--sidebar-w);right:0;
+}
+#map{width:100%;height:100%}
+
+/* Map controls */
+.map-controls{
+  position:absolute;bottom:30px;right:14px;z-index:900;
+  display:flex;flex-direction:column;gap:6px;
+}
+.map-controls button{
+  width:40px;height:40px;border-radius:50%;border:none;
+  background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.15);
+  cursor:pointer;font-size:20px;display:flex;align-items:center;
+  justify-content:center;transition:.2s;color:var(--text);
+}
+.map-controls button:hover{background:var(--primary);color:#fff}
+
+/* ========== 手機 ========== */
+@media(max-width:768px){
+  .hamburger{display:block}
+  .sidebar{width:100%;transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .map-wrap{left:0}
+}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <button class="hamburger" onclick="toggleSidebar()">☰</button>
+  <div class="logo">🏢 良富居地產</div>
+  <div class="unit-toggle">
+    <button id="btnPing" class="active" onclick="setUnit('ping')">坪</button>
+    <button id="btnSqm" onclick="setUnit('sqm')">m²</button>
+  </div>
+</div>
+
+<!-- SIDEBAR -->
+<div class="sidebar" id="sidebar">
+  <!-- Search -->
+  <div class="search-box">
+    <div class="search-row">
+      <input id="searchInput" type="text" placeholder="搜尋地址 / 建案名稱…" 
+             onkeydown="if(event.key==='Enter')doSearch()">
+      <button onclick="doSearch()">搜尋</button>
+    </div>
+    <div class="filter-toggle" onclick="toggleFilters()">
+      <span id="filterArrow">▶</span> 進階篩選
+    </div>
+    <div class="filter-panel" id="filterPanel">
+      <div>
+        <label>建物型態</label>
+        <select id="fBuildType">
+          <option value="">全部</option>
+          <option value="住宅大樓">住宅大樓(11樓含以上有電梯)</option>
+          <option value="華廈">華廈(10樓含以下有電梯)</option>
+          <option value="公寓">公寓(5樓含以下無電梯)</option>
+          <option value="透天厝">透天厝</option>
+          <option value="套房">套房(1房1廳1衛)</option>
+        </select>
+      </div>
+      <div>
+        <label>房數</label>
+        <input id="fRooms" type="text" placeholder="如 2,3,4">
+      </div>
+      <div>
+        <label>坪數範圍</label>
+        <input id="fPing" type="text" placeholder="如 20-40">
+      </div>
+      <div>
+        <label>公設比 %</label>
+        <input id="fRatio" type="text" placeholder="如 0-35">
+      </div>
+      <div>
+        <label>單價 (萬/坪)</label>
+        <input id="fUnitPrice" type="text" placeholder="如 40-80">
+      </div>
+      <div>
+        <label>總價 (萬)</label>
+        <input id="fPrice" type="text" placeholder="如 1000-3000">
+      </div>
+      <div>
+        <label>民國年範圍</label>
+        <input id="fYear" type="text" placeholder="如 110-114">
+      </div>
+      <div class="filter-btns">
+        <button class="btn-clear" onclick="clearFilters()">清除</button>
+        <button class="btn-apply" onclick="doSearch()">套用</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sort -->
+  <div class="sort-bar">
+    <button class="active" data-sort="date" onclick="setSort(this)">日期新→舊</button>
+    <button data-sort="price" onclick="setSort(this)">總價高→低</button>
+    <button data-sort="unit_price" onclick="setSort(this)">單價高→低</button>
+    <button data-sort="ping" onclick="setSort(this)">坪數大→小</button>
+    <button data-sort="public_ratio" onclick="setSort(this)">公設低→高</button>
+    <button data-sort="count" onclick="setSort(this)">成交筆數多→少</button>
+    <select id="limitSelect" class="limit-select" onchange="doSearch()" title="顯示筆數">
+      <option value="100">100筆</option>
+      <option value="200">200筆</option>
+      <option value="500" selected>500筆</option>
+      <option value="1000">1000筆</option>
+      <option value="2000">全部</option>
+    </select>
+  </div>
+
+  <!-- Summary -->
+  <div class="summary-bar" id="summaryBar"></div>
+
+  <!-- Results -->
+  <div class="results" id="results">
+    <div class="empty">👆 輸入地址或建案名稱開始搜尋</div>
+  </div>
+</div>
+
+<!-- MAP -->
+<div class="map-wrap">
+  <div id="map"></div>
+  <div class="map-controls">
+    <button onclick="locateMe()" title="我的位置">📍</button>
+    <button onclick="map.zoomIn()" title="放大">＋</button>
+    <button onclick="map.zoomOut()" title="縮小">－</button>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// 全域狀態
+// ═══════════════════════════════════════════════════════════════
+let map, markerGroup;
+let unit = 'ping';           // 'ping' | 'sqm'
+let currentSort = 'date';
+let txData = [];              // 目前的搜尋結果
+let activeCardIdx = -1;
+let markerClusterGroup;       // MarkerClusterGroup 用於聚類
+
+// ═══════════════════════════════════════════════════════════════
+// 地圖初始化
+// ═══════════════════════════════════════════════════════════════
+function initMap(){
+  map = L.map('map',{zoomControl:false}).setView([25.033,121.565],13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:19, attribution:'© OpenStreetMap'
+  }).addTo(map);
+  
+  // 使用 MarkerClusterGroup 替代 layerGroup
+  markerClusterGroup = L.markerClusterGroup({
+    maxClusterRadius: 80,
+    disableClusteringAtZoom: 17
+  });
+  map.addLayer(markerClusterGroup);
+  markerGroup = markerClusterGroup;  // 保持向後相容
+  
+  // 添加圖例
+  addLegend();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 單位切換
+// ═══════════════════════════════════════════════════════════════
+function setUnit(u){
+  unit = u;
+  document.getElementById('btnPing').classList.toggle('active', u==='ping');
+  document.getElementById('btnSqm').classList.toggle('active', u==='sqm');
+  renderResults();
+  renderSummary();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 格式化工具
+// ═══════════════════════════════════════════════════════════════
+function fmtWan(val){
+  // val 是元，轉萬
+  if(!val||val<=0) return '-';
+  const w = val / 10000;
+  if(w >= 10000) return (w/10000).toFixed(2) + '億';
+  if(w >= 1) return w.toFixed(w<100?1:0) + '萬';
+  return val.toLocaleString() + '元';
+}
+
+function fmtArea(sqm, ping){
+  if(unit==='ping') return (ping||0).toFixed(1) + '坪';
+  return (sqm||0).toFixed(1) + 'm²';
+}
+
+function fmtUnitPrice(unitPricePing, unitPriceSqm){
+  // unitPricePing 是 元/坪, unitPriceSqm 是 元/m²
+  if(unit==='ping'){
+    if(!unitPricePing||unitPricePing<=0) return '-';
+    const w = unitPricePing / 10000;
+    return w.toFixed(1) + '萬/坪';
+  } else {
+    if(!unitPriceSqm||unitPriceSqm<=0) return '-';
+    const w = unitPriceSqm / 10000;
+    return w.toFixed(1) + '萬/m²';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Sidebar toggle (手機)
+// ═══════════════════════════════════════════════════════════════
+function toggleSidebar(){
+  document.getElementById('sidebar').classList.toggle('open');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 篩選面板
+// ═══════════════════════════════════════════════════════════════
+function toggleFilters(){
+  const p = document.getElementById('filterPanel');
+  const a = document.getElementById('filterArrow');
+  const show = !p.classList.contains('show');
+  p.classList.toggle('show', show);
+  a.textContent = show ? '▼' : '▶';
+}
+
+function clearFilters(){
+  ['fBuildType','fRooms','fPing','fRatio','fUnitPrice','fPrice','fYear']
+    .forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
+}
+
+function getFilterParams(){
+  let p = '';
+  const bt = document.getElementById('fBuildType').value;
+  if(bt) p += '&building_type=' + encodeURIComponent(bt);
+  const rm = document.getElementById('fRooms').value.trim();
+  if(rm) p += '&rooms=' + encodeURIComponent(rm);
+  const pg = document.getElementById('fPing').value.trim();
+  if(pg) p += '&ping=' + encodeURIComponent(pg);
+  const rt = document.getElementById('fRatio').value.trim();
+  if(rt) p += '&public_ratio=' + encodeURIComponent(rt);
+  const up = document.getElementById('fUnitPrice').value.trim();
+  if(up) p += '&unit_price=' + encodeURIComponent(up);
+  const pr = document.getElementById('fPrice').value.trim();
+  if(pr) p += '&price=' + encodeURIComponent(pr);
+  const yr = document.getElementById('fYear').value.trim();
+  if(yr) p += '&year=' + encodeURIComponent(yr);
+  return p;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 前端排序（全部在白調內處理、不再呼叫 API）
+// ═══════════════════════════════════════════════════════════════
+function sortData(sortType){
+  switch(sortType){
+    case 'date':
+      txData.sort((a,b) => (b.date_raw||'').localeCompare(a.date_raw||''));
+      break;
+    case 'price':
+      txData.sort((a,b) => (b.price||0) - (a.price||0));
+      break;
+    case 'unit_price':
+      txData.sort((a,b) => (b.unit_price_ping||0) - (a.unit_price_ping||0));
+      break;
+    case 'ping':
+      txData.sort((a,b) => (b.area_ping||0) - (a.area_ping||0));
+      break;
+    case 'public_ratio':
+      txData.sort((a,b) => (a.public_ratio||999) - (b.public_ratio||999));
+      break;
+    case 'count':{
+      const addrCount = {};
+      txData.forEach(tx => {
+        addrCount[tx.address] = (addrCount[tx.address]||0) + 1;
+      });
+      txData.sort((a,b) => addrCount[b.address] - addrCount[a.address]);
+      break;
+    }
+  }
+}
+
+function setSort(btn){
+  document.querySelectorAll('.sort-bar button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  currentSort = btn.dataset.sort;
+  if(txData.length > 0){
+    sortData(currentSort);
+    renderResults();
+    plotMarkers();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 搜尋
+// ═══════════════════════════════════════════════════════════════
+async function doSearch(){
+  const kw = document.getElementById('searchInput').value.trim();
+  if(!kw){alert('請輸入搜尋關鍵字');return;}
+
+  const results = document.getElementById('results');
+  results.innerHTML = '<div class="loading">🔍 搜尋中…</div>';
+
+  const limitVal = document.getElementById('limitSelect').value;
+  const url = '/api/search?keyword=' + encodeURIComponent(kw) +
+              '&limit=' + limitVal + getFilterParams();
+  try{
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if(!data.success){
+      results.innerHTML = '<div class="empty">❌ ' + (data.error||'搜尋失敗') + '</div>';
+      return;
+    }
+    txData = data.transactions || [];
+    if(txData.length === 0){
+      results.innerHTML = '<div class="empty">😢 沒有找到符合條件的資料</div>';
+      document.getElementById('summaryBar').style.display = 'none';
+      markerGroup.clearLayers();
+      return;
+    }
+
+    // 顯示建案 badge
+    window._communityName = data.community_name || null;
+    window._searchType = data.search_type || 'address';
+    window._summary = data.summary || {};
+
+    // 前端排序
+    sortData(currentSort);
+
+    renderResults();
+    renderSummary();
+    plotMarkers();
+
+    // 手機上自動收起 sidebar
+    if(window.innerWidth <= 768){
+      document.getElementById('sidebar').classList.remove('open');
+    }
+  } catch(e){
+    results.innerHTML = '<div class="empty">❌ 網路錯誤: ' + e.message + '</div>';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 渲染結果列表
+// ═══════════════════════════════════════════════════════════════
+function renderResults(){
+  const container = document.getElementById('results');
+  let html = '';
+
+  if(window._communityName){
+    html += '<div style="padding:10px 12px"><span class="community-badge">🏘️ ' +
+            escHtml(window._communityName) + '</span></div>';
+  }
+
+  txData.forEach((tx, i) => {
+    const isActive = i === activeCardIdx;
+    html += `<div class="tx-card${isActive?' active':''}" onclick="selectTx(${i})" data-idx="${i}">
+      <div class="tx-addr" title="${escHtml(tx.address)}">${escHtml(tx.address)}</div>
+      <div class="tx-meta">
+        <span>📅 ${tx.date||'-'}</span>
+        <span>📐 ${fmtArea(tx.area_sqm, tx.area_ping)}</span>
+        <span>${tx.rooms||0}房${tx.halls||0}廳${tx.baths||0}衛</span>
+        ${tx.floor?'<span>🏢 '+escHtml(tx.floor)+'F/'+escHtml(tx.total_floors)+'F</span>':''}
+        ${tx.public_ratio>0?'<span class="tag">公設'+tx.public_ratio+'%</span>':''}
+        ${tx.building_type?'<span class="tag">'+escHtml(tx.building_type)+'</span>':''}
+      </div>
+      <div class="tx-price">${fmtWan(tx.price)} <span class="tx-unit">${fmtUnitPrice(tx.unit_price_ping, tx.unit_price_sqm)}</span></div>
+    </div>`;
+  });
+  container.innerHTML = html;
+}
+
+function escHtml(s){
+  if(!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 渲染統計摘要
+// ═══════════════════════════════════════════════════════════════
+function renderSummary(){
+  const s = window._summary;
+  if(!s || !s.total){
+    document.getElementById('summaryBar').style.display = 'none';
+    return;
+  }
+  const bar = document.getElementById('summaryBar');
+  bar.style.display = 'block';
+  
+  const avgUp = unit==='ping' ? fmtUnitPrice(s.avg_unit_price_ping, 0) : fmtUnitPrice(0, s.avg_unit_price_ping / 3.30579);
+  const minUp = unit==='ping' ? fmtUnitPrice(s.min_unit_price_ping, 0) : fmtUnitPrice(0, s.min_unit_price_ping / 3.30579);
+  const maxUp = unit==='ping' ? fmtUnitPrice(s.max_unit_price_ping, 0) : fmtUnitPrice(0, s.max_unit_price_ping / 3.30579);
+  
+  bar.innerHTML = `
+    共 <span class="val">${s.total}</span> 筆 ｜
+    均價 <span class="val">${fmtWan(s.avg_price)}</span> ｜
+    均坪 <span class="val">${s.avg_ping}坪</span> ｜
+    單價 <span class="val">${avgUp}</span>
+    <br>
+    單價區間 <span class="val">${minUp}</span> ~ <span class="val">${maxUp}</span> ｜
+    均公設 <span class="val">${s.avg_ratio||'-'}%</span>
+  `;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 地圖 marker
+// ═══════════════════════════════════════════════════════════════
+function plotMarkers(){
+  markerClusterGroup.clearLayers();
+  const bounds = [];
+
+  txData.forEach((tx, i) => {
+    if(!tx.lat || !tx.lng) return;
+
+    // 依據總價區間決定顏色
+    let color = '#888';
+    if (tx.price > 0) {
+      if (tx.price > 40000000) {
+        color = '#ea4335'; // > 4000萬
+      } else if (tx.price > 20000000) {
+        color = '#f9ab00'; // 2000~4000萬
+      } else {
+        color = '#34a853'; // ≤ 2000萬
+      }
+    }
+
+    // 格式化總價用於顯示
+    const priceText = tx.price >= 100000000 
+      ? (tx.price / 100000000).toFixed(1) + '億'
+      : (tx.price / 10000).toFixed(0) + '萬';
+
+    // 建立自訂 marker HTML
+    const markerHtml = `
+      <div style="
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 50px;
+        height: 50px;
+        background: ${color};
+        border: 3px solid white;
+        border-radius: 50%;
+        font-size: 12px;
+        font-weight: bold;
+        color: white;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+      ">
+        ${priceText}
+      </div>
+    `;
+
+    const markerIcon = L.divIcon({
+      html: markerHtml,
+      iconSize: [50, 50],
+      className: 'price-marker'
+    });
+
+    const marker = L.marker([tx.lat, tx.lng], {icon: markerIcon});
+    marker.bindPopup(makePopup(tx), {maxWidth:300});
+    marker.on('click', () => {
+      activeCardIdx = i;
+      renderResults();
+      // 滾動到對應卡片
+      const card = document.querySelector(`.tx-card[data-idx="${i}"]`);
+      if(card) card.scrollIntoView({behavior:'smooth', block:'center'});
+    });
+
+    markerClusterGroup.addLayer(marker);
+    bounds.push([tx.lat, tx.lng]);
+  });
+
+  if(bounds.length > 0){
+    map.fitBounds(bounds, {padding:[40,40], maxZoom:16});
+  }
+}
+
+function makePopup(tx){
+  return `<div style="font-size:13px;line-height:1.6">
+    <b>${escHtml(tx.address)}</b><br>
+    📅 ${tx.date||'-'} ｜ 📐 ${fmtArea(tx.area_sqm, tx.area_ping)}<br>
+    💰 <b style="color:#ea4335">${fmtWan(tx.price)}</b>
+    <span style="color:#666">${fmtUnitPrice(tx.unit_price_ping, tx.unit_price_sqm)}</span><br>
+    🏢 ${tx.rooms||0}房${tx.halls||0}廳${tx.baths||0}衛
+    ${tx.floor?'｜ '+tx.floor+'F/'+tx.total_floors+'F':''}
+    ${tx.public_ratio>0?'｜ 公設'+tx.public_ratio+'%':''}
+    ${tx.building_type?'<br>'+escHtml(tx.building_type):''}
+    ${tx.note?'<br><span style="color:#888;font-size:11px">'+escHtml(tx.note)+'</span>':''}
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 選取交易
+// ═══════════════════════════════════════════════════════════════
+function selectTx(idx){
+  activeCardIdx = idx;
+  renderResults();
+  const tx = txData[idx];
+  if(tx && tx.lat && tx.lng){
+    map.setView([tx.lat, tx.lng], 16);
+    // 開啟對應 popup
+    markerGroup.eachLayer(layer => {
+      const ll = layer.getLatLng();
+      if(Math.abs(ll.lat - tx.lat) < 0.0001 && Math.abs(ll.lng - tx.lng) < 0.0001){
+        layer.openPopup();
+      }
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 圖例
+// ═══════════════════════════════════════════════════════════════
+function addLegend(){
+  const legend = L.control({position: 'bottomright'});
+  
+  legend.onAdd = function(){
+    const div = L.DomUtil.create('div', 'info legend');
+    div.innerHTML = `
+      <style>
+        .legend {
+          background: white;
+          padding: 12px;
+          border-radius: 5px;
+          box-shadow: 0 0 15px rgba(0,0,0,0.2);
+          font-size: 13px;
+          line-height: 1.8;
+        }
+        .legend-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 6px;
+        }
+        .legend-color {
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          border: 2px solid #fff;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+        }
+      </style>
+      <div style="font-weight: bold; margin-bottom: 8px;">總價區間</div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #34a853;"></div>
+        <span>≤ 2000萬</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #f9ab00;"></div>
+        <span>2000 ~ 4000萬</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #ea4335;"></div>
+        <span>&gt; 4000萬</span>
+      </div>
+    `;
+    
+    // 阻止地圖事件冒泡
+    L.DomEvent.disableScrollPropagation(div);
+    L.DomEvent.disableClickPropagation(div);
+    
+    return div;
+  };
+  
+  legend.addTo(map);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// GPS 定位
+// ═══════════════════════════════════════════════════════════════
+function locateMe(){
+  if(!navigator.geolocation){
+    alert('您的瀏覽器不支援定位功能');
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const {latitude:lat, longitude:lng} = pos.coords;
+      map.setView([lat,lng], 16);
+      L.marker([lat,lng]).addTo(map)
+        .bindPopup('📍 您的位置').openPopup();
+    },
+    err => alert('定位失敗: ' + err.message),
+    {enableHighAccuracy:true, timeout:10000}
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 初始化
+// ═══════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+  initMap();
+});
+</script>
+</body>
+</html>
