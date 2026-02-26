@@ -566,7 +566,7 @@ class LandDataDB:
         if dedup_key in self._batch_keys:
             self._stats['duplicated'] += 1
             if _VERBOSE and self._verbose_count['duplicated'] < _VERBOSE_MAX:
-                log_print(f'    [重複-batch] {dedup_key}: {addr}')
+                log_print(f'    [重複-batch] serial={rec.get("serial_no","?")} key={dedup_key}: {addr}')
                 self._verbose_count['duplicated'] += 1
             return
 
@@ -579,16 +579,17 @@ class LandDataDB:
             ).fetchone()
             if row:
                 existing_id = row[0]
-                enriched_fields = self._try_enrich(existing_id, rec)
-                if enriched_fields:
+                enriched = self._try_enrich(existing_id, rec)
+                if enriched:
                     self._stats['enriched'] += 1
                     if _VERBOSE and self._verbose_count['enriched'] < _VERBOSE_MAX:
-                        log_print(f'    [補充] id={existing_id} 欄位={enriched_fields}: {addr}')
+                        detail = ', '.join(f'{k}={v}' for k, v in enriched.items())
+                        log_print(f'    [補充] exist_id={existing_id} serial={rec.get("serial_no","?")} {detail}: {addr}')
                         self._verbose_count['enriched'] += 1
                 else:
                     self._stats['duplicated'] += 1
                     if _VERBOSE and self._verbose_count['duplicated'] < _VERBOSE_MAX:
-                        log_print(f'    [重複] {dedup_key}: {addr}')
+                        log_print(f'    [重複] exist_id={existing_id} serial={rec.get("serial_no","?")} key={dedup_key}: {addr}')
                         self._verbose_count['duplicated'] += 1
                 return
             # Bloom false positive → fall through to insert
@@ -633,7 +634,7 @@ class LandDataDB:
         self._enrich_batch.append((updates, row_id))
         if len(self._enrich_batch) >= self.BATCH_SIZE:
             self._flush_enriches()
-        return list(updates.keys())
+        return updates
 
     def _flush_inserts(self):
         if not self._insert_batch:
@@ -736,7 +737,7 @@ class LandDataDB:
         self.flush_all()
         cur = self.conn.cursor()
 
-        # 索引
+        # 單欄索引
         log_print('  📇 建立索引...')
         indexes = [
             ('idx_county_city', 'county_city'),
@@ -749,15 +750,23 @@ class LandDataDB:
             ('idx_price', 'total_price'),
             ('idx_serial', 'serial_no'),
             ('idx_dedup_key', 'dedup_key'),
+            ('idx_community', 'community_name'),
         ]
         for name, col in indexes:
             cur.execute(f'CREATE INDEX IF NOT EXISTS {name} ON land_transaction({col})')
-        cur.execute('''CREATE INDEX IF NOT EXISTS idx_addr_combo
-            ON land_transaction(county_city, district, street, lane, number)''')
-        # com2address 查詢用索引
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_community_address ON land_transaction(community_name, address) WHERE community_name IS NOT NULL AND address IS NOT NULL')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_street_lane_district ON land_transaction(street, lane, district)')
-        cur.execute('CREATE INDEX IF NOT EXISTS idx_search_numbers ON land_transaction(street, lane, district, total_floors, build_date) WHERE number IS NOT NULL')
+
+        # 複合索引（加速查詢服務）
+        composite_indexes = [
+            ('idx_addr_combo', 'county_city, district, street, lane, number'),
+            ('idx_community_address', 'community_name, address'),
+            ('idx_street_lane_district', 'street, lane, district'),
+            ('idx_search_numbers', 'street, lane, district, total_floors, build_date'),
+            ('idx_district_street_number', 'district, street, number'),
+            ('idx_district_street_lane', 'district, street, lane'),
+            ('idx_community_district', 'community_name, district'),
+        ]
+        for name, cols in composite_indexes:
+            cur.execute(f'CREATE INDEX IF NOT EXISTS {name} ON land_transaction({cols})')
         self.conn.commit()
 
         # FTS5

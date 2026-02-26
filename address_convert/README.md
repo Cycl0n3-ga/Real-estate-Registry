@@ -89,6 +89,7 @@ python3 convert.py --csv-input a.csv --api-input t.db -o out.db
 | `--csv-input` | [向後相容] CSV 路徑 |
 | `--api-input` | [向後相容] API DB 路徑 |
 | `--output`, `-o` | [向後相容] 同 --target |
+| `--verbose`, `-v` | 詳細模式: 印出丟棄/補充/重複的詳細記錄及 serial_no / exist_id / 欄位=值 |
 
 ## 自動識別邏輯
 
@@ -118,8 +119,10 @@ record
   │     └── key_price = (交易日期前7碼, 總價)
   │
   ├── 已存在? (addr_key 或 price_key 命中)
+  │     ├── **[重複-batch]** — 同一批次 (10,000 筆) 內已見過，顯示 serial_no
+  │     ├── **[重複]** — Bloom filter + DB 查到已存在，顯示 exist_id + serial_no
   │     ├── 讀取既有記錄的 26 個可補充欄位
-  │     ├── 新資料有值且舊資料為空 → UPDATE (enrich)
+  │     ├── 新資料有值且舊資料為空 → UPDATE — **[補充]** 顯示 exist_id + serial_no + 欄位=值
   │     └── 無新資訊 → 視為重複，跳過
   │
   └── 不存在 → INSERT 新記錄
