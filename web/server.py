@@ -155,14 +155,41 @@ com2addr_engine = None
 com2addr_ready = False
 geocoder_engine = None
 geocoder_ready = False
+_community_coords_cache = {}  # community_name → (lat, lng)
 
+
+def _build_community_coords_cache():
+    """建立建案平均座標快取（啟動時呼叫，約 2-3 秒）"""
+    global _community_coords_cache
+    try:
+        t0 = time.time()
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.execute("""
+            SELECT community_name, AVG(lat) AS avg_lat, AVG(lng) AS avg_lng
+            FROM land_transaction
+            WHERE community_name IS NOT NULL AND community_name != ''
+              AND lat IS NOT NULL AND lat != 0
+              AND lng IS NOT NULL AND lng != 0
+            GROUP BY community_name
+        """)
+        _community_coords_cache = {row[0]: (row[1], row[2]) for row in cursor}
+        conn.close()
+        print(f"📍 建案座標快取: {len(_community_coords_cache)} 個建案 ({time.time()-t0:.2f}s)")
+    except Exception as e:
+        print(f"⚠️  建案座標快取建立失敗: {e}")
 
 def init_com2addr():
-    """背景初始化 com2address 查詢引擎 - 已禁用，因為太慢且有線程問題"""
-    global com2addr_ready
-    com2addr_ready = True
-    print("⏭️  com2address 初始化已跳過（線程問題+性能影響）")
-    print("   將使用 address_match + 直查 DB 替代")
+    """背景初始化 com2address 查詢引擎"""
+    global com2addr_engine, com2addr_ready
+    try:
+        print("🏘️  載入 com2address 查詢引擎...")
+        com2addr_engine = Community2AddressLookup(verbose=False, use_591=False)
+        com2addr_ready = True
+        print("✅ com2address 就緒")
+    except Exception as e:
+        print(f"⚠️  com2address 載入失敗: {e}")
+        import traceback; traceback.print_exc()
+        com2addr_ready = True
 
 
 def init_geocoder():
@@ -265,30 +292,33 @@ def format_tx_row(row: dict) -> dict:
     district = str(row.get("district", "") or "")
     address = str(row.get("address", "") or "")
 
-    # 座標：優先用 DB 中的座標（最快），其次用行政區，最後才用 OSM
-    lat = None
-    lng = None
-    coord_source = "unknown"
-
-    # 優先用 DB 快取座標
+    # 座標策略：DB 座標 → 建案平均座標 → 行政區座標（不呼叫 OSM，太慢）
     lat = row.get("lat")
     lng = row.get("lng")
-    if lat and lng:
-        coord_source = "db_cache"
+    coord_source = "none"
 
-    # 回退：行政區座標（不做 OSM 查詢，避免每次 format 都發網路請求）
+    if lat and lng and lat != 0 and lng != 0:
+        coord_source = "db"
+    else:
+        lat, lng = None, None
+
+    # 回退 1：建案平均座標（精確度高）
+    community_name_raw = str(row.get("community_name", "") or "")
+    if not lat and community_name_raw and community_name_raw in _community_coords_cache:
+        lat, lng = _community_coords_cache[community_name_raw]
+        coord_source = "community"
+
+    # 回退 2：行政區座標（最低精確度）
     if not lat or not lng:
         lat, lng = get_district_coords(district)
         coord_source = "district"
-    
-    # 只在座標來自行政區時才加折疊偏移
-    # OSM 精確座標不需要偏移，DB 快取也不需要
-    if lat and lng and coord_source == "district":
-        # 使用確定的折疊方式（基於地址 hash）而不是隨機
+
+    # 只在低精確度時加偏移（避免堆疊）
+    if lat and lng and coord_source in ("district", "community"):
         h = abs(hash(address + date_raw))
-        # 折疊偏移：确保同一地址每次都是同樣的偏移，但不同地址微小不同
-        lat = lat + ((h % 1000) - 500) * 0.00005
-        lng = lng + (((h >> 10) % 1000) - 500) * 0.00005
+        offset_scale = 0.00003 if coord_source == "community" else 0.00005
+        lat = lat + ((h % 1000) - 500) * offset_scale
+        lng = lng + (((h >> 10) % 1000) - 500) * offset_scale
 
     return {
         "address": address,
@@ -317,9 +347,10 @@ def format_tx_row(row: dict) -> dict:
         "parking_price": row.get("parking_price", 0) or 0,
         "parking_area_sqm": row.get("parking_area_sqm", 0) or 0,
         "note": str(row.get("note", "") or ""),
-        "community_name": str(row.get("community_name", "") or ""),
+        "community_name": community_name_raw,
         "lat": lat,
         "lng": lng,
+        "coord_source": coord_source,
     }
 
 
@@ -483,32 +514,66 @@ def api_search():
 
     search_type = "address"
     community_name = None
-    
-    # ── 步驟 1: 先嘗試直接查詢 community_name（最快） ──
-    print(f"🔍 搜尋: {keyword}")
+    matched_community_name = None  # DB 中的精確建案名（用於直查）
+
+    # ── Step 1: 嘗試用 com2address（是否為建案名稱？）──
+    if com2addr_ready and com2addr_engine:
+        try:
+            com_result = com2addr_engine.query(keyword, top_n=5)
+            if com_result.get("found") and com_result.get("match_type") != "未找到":
+                mt = com_result.get("match_type", "")
+                tx_count = com_result.get("transaction_count", 0) or 0
+                # 精確匹配且有足夠交易量，或模糊匹配分數高
+                if "精確" in mt and tx_count >= 2:
+                    search_type = "community"
+                    community_name = com_result.get("matched_name", keyword)
+                    matched_community_name = community_name
+                    print(f"🏘️  建案搜尋: {keyword} → {community_name} ({tx_count} 筆)")
+                elif "精確" not in mt:
+                    # 模糊匹配：找交易量最多的候選
+                    candidates = com_result.get("candidates", [])
+                    best = max(candidates, key=lambda x: x.get("tx_count", 0), default=None)
+                    if best and best.get("tx_count", 0) >= 2:
+                        search_type = "community"
+                        community_name = best["name"]
+                        matched_community_name = community_name
+                        print(f"🏘️  建案模糊搜尋: {keyword} → {community_name} ({best['tx_count']} 筆)")
+        except Exception as e:
+            print(f"⚠️  com2address 查詢錯誤: {e}")
+
+    # ── Step 2: 嘗試 address2community（輸入是地址時反查建案）──
+    if search_type == "address":
+        try:
+            a2c_result = addr2com_lookup(keyword)
+            if a2c_result and isinstance(a2c_result, dict):
+                best_name = a2c_result.get("best", "")
+                if not best_name and a2c_result.get("results"):
+                    for r in a2c_result["results"]:
+                        if isinstance(r, dict) and r.get("community"):
+                            best_name = r["community"]
+                            break
+                if best_name:
+                    print(f"📍 地址→建案: {keyword} → {best_name}")
+                    community_name = best_name
+                    matched_community_name = best_name
+                    search_type = "address_to_community"
+        except Exception as e:
+            print(f"⚠️  address2community 查詢錯誤: {e}")
+
+    # ── Step 3: 搜尋房價 ──
     all_transactions = []
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        # 直接查詢社區名稱
-        cursor.execute(
-            "SELECT * FROM land_transaction WHERE community_name = ? LIMIT ?",
-            (keyword, limit)
-        )
-        rows = cursor.fetchall()
-        if rows:
-            all_transactions = [format_tx_row(dict(r)) for r in rows]
-            search_type = "community"
-            community_name = keyword
-            print(f"   ✅ community_name 直查: {len(all_transactions)} 筆")
-        
-        conn.close()
-    except Exception as e:
-        print(f"   ⚠️  community_name 查詢失敗: {e}")
-    
-    # ── 步驟 2: 若community_name直查無結果，使用address_match搜尋（備選） ──
+
+    # 若有建案名稱，直接用 community_name 查 DB（最快、最準確）
+    if matched_community_name:
+        try:
+            all_transactions = _search_by_community_name(
+                matched_community_name, filters=filters, limit=limit
+            )
+            print(f"   → community_name 直查: {len(all_transactions)} 筆")
+        except Exception as e:
+            print(f"  ⚠️  community 直查失敗: {e}")
+
+    # fallback: 直接用關鍵字搜 address_match
     if not all_transactions:
         try:
             result = search_address(
@@ -517,10 +582,8 @@ def api_search():
                 limit=limit, show_sql=False
             )
             all_transactions = [format_tx_row(r) for r in result.get("results", [])]
-            if all_transactions:
-                print(f"   ✅ address_match 找到 {len(all_transactions)} 筆")
-            else:
-                print(f"   ❌ address_match 找到 0 筆")
+            if not community_name:
+                search_type = "address"
         except Exception as e:
             print(f"⚠️  address_search 錯誤: {e}")
             return jsonify({"success": False, "error": str(e)}), 500
@@ -719,13 +782,16 @@ def api_stats():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("🏢 良富居地產 v3.0 — API 伺服器")
+    print("🏢 良富居地產 v3.3 — API 伺服器")
     print("=" * 60)
     print(f"📁 資料庫: {DB_PATH}")
     print(f"📁 com2address: {COM2ADDR_DIR}")
     print(f"📁 address2com: {ADDR2COM_DIR}")
     print(f"🌐 http://localhost:5001")
     print("=" * 60)
+
+    # 建立建案座標快取（同步，約 2-3 秒）
+    _build_community_coords_cache()
 
     t = threading.Thread(target=init_com2addr, daemon=True)
     t.start()

@@ -416,26 +416,37 @@ function initMap(){
       else if(count >= 30) dim = 52;
       else if(count >= 10) dim = 46;
 
-      // 叢集平均總價
+      // 叢集平均總價與單價
       const markers = cluster.getAllChildMarkers();
-      let totalPrice = 0, validCount = 0;
+      let totalPrice = 0, totalUnit = 0, validP = 0, validU = 0;
       markers.forEach(m => {
-        if(m._txPrice && m._txPrice > 0){ totalPrice += m._txPrice; validCount++; }
+        if(m._txPrice && m._txPrice > 0){ totalPrice += m._txPrice; validP++; }
+        if(m._txUnitPrice && m._txUnitPrice > 0){ totalUnit += m._txUnitPrice; validU++; }
       });
-      const avgWan = validCount > 0 ? (totalPrice / validCount / 10000) : 0; // 萬
+      const avgWan = validP > 0 ? (totalPrice / validP / 10000) : 0;
+      const avgUnitWan = validU > 0 ? (totalUnit / validU / 10000) : 0;
+
       let priceLabel = '';
       if(avgWan >= 10000) priceLabel = (avgWan/10000).toFixed(1)+'億';
       else if(avgWan >= 1) priceLabel = avgWan.toFixed(0)+'萬';
 
-      let color = '#1a73e8';
-      if(avgWan > 4000) color = '#ea4335';
-      else if(avgWan > 2000) color = '#f9ab00';
-      else if(avgWan > 0) color = '#34a853';
+      // 雙色：內部=平均總價色，邊框=平均單價色
+      let innerColor = '#1a73e8';
+      if(avgWan >= 4000) innerColor = '#c62828';
+      else if(avgWan >= 2000) innerColor = '#ea4335';
+      else if(avgWan >= 1000) innerColor = '#f9ab00';
+      else if(avgWan > 0) innerColor = '#34a853';
+
+      let outerColor = '#fff';
+      if(avgUnitWan >= 70) outerColor = '#b71c1c';
+      else if(avgUnitWan >= 40) outerColor = '#e65100';
+      else if(avgUnitWan >= 20) outerColor = '#f57f17';
+      else if(avgUnitWan > 0) outerColor = '#1b5e20';
 
       return L.divIcon({
         html: `<div style="
           display:flex;flex-direction:column;align-items:center;justify-content:center;
-          width:${dim}px;height:${dim}px;background:${color};border:3px solid #fff;
+          width:${dim}px;height:${dim}px;background:${innerColor};border:4px solid ${outerColor};
           border-radius:50%;color:#fff;font-weight:700;font-size:11px;
           text-shadow:0 1px 2px rgba(0,0,0,.3);box-shadow:0 2px 8px rgba(0,0,0,.25);
           line-height:1.2;cursor:pointer;
@@ -916,33 +927,68 @@ function plotMarkers(fitBounds = true){
   markerClusterGroup.clearLayers();
   const boundsArr = [];
 
+  // 顏色映射函數
+  function getTotalPriceColor(price){
+    const wan = (price||0) / 10000;
+    if(wan <= 0) return '#888';
+    if(wan >= 4000) return '#c62828';  // 深紅 > 4000萬
+    if(wan >= 2000) return '#ea4335';  // 紅 2000-4000萬
+    if(wan >= 1000) return '#f9ab00';  // 橘 1000-2000萬
+    return '#34a853';                  // 綠 < 1000萬
+  }
+  function getUnitPriceColor(unitPricePing){
+    const wan = (unitPricePing||0) / 10000;
+    if(wan <= 0) return '#888';
+    if(wan >= 70) return '#b71c1c';    // 深紅 > 70萬/坪
+    if(wan >= 40) return '#e65100';    // 深橘 40-70萬/坪
+    if(wan >= 20) return '#f57f17';    // 橘黃 20-40萬/坪
+    return '#1b5e20';                  // 深綠 < 20萬/坪
+  }
+
   txData.forEach((tx, i) => {
     if(!tx.lat || !tx.lng) return;
 
+    const innerColor = getTotalPriceColor(tx.price);
+    const outerColor = getUnitPriceColor(tx.unit_price_ping);
+
+    // 總價文字
     const priceWan = (tx.price || 0) / 10000;
-    let color = '#888';
-    if(tx.price > 0){
-      if(priceWan > 4000) color = '#ea4335';
-      else if(priceWan > 2000) color = '#f9ab00';
-      else color = '#34a853';
-    }
+    let priceText;
+    if(priceWan >= 10000) priceText = (priceWan/10000).toFixed(1) + '億';
+    else if(priceWan >= 1) priceText = priceWan.toFixed(0) + '萬';
+    else priceText = '-';
 
-    // 地圖 marker 顯示總價
-    const priceText = tx.price >= 100000000
-      ? (tx.price / 100000000).toFixed(1) + '億'
-      : priceWan >= 1 ? priceWan.toFixed(0) + '萬' : '-';
+    // 社區名標籤（截斷到 6 字）
+    const cn = tx.community_name || '';
+    const comLabel = cn ? cn.substring(0, 6) : '';
 
-    const markerHtml = `<div style="
-      display:flex;align-items:center;justify-content:center;
-      width:46px;height:46px;background:${color};
-      border:2px solid white;border-radius:50%;
-      font-size:11px;font-weight:bold;color:white;
-      text-shadow:0 1px 2px rgba(0,0,0,.3);
-      box-shadow:0 2px 6px rgba(0,0,0,.2);
-    ">${priceText}</div>`;
+    // 雙色環形 marker：內部=總價色，外框=單價色
+    const markerSize = comLabel ? 50 : 44;
+    const markerHtml = `<div style="display:flex;flex-direction:column;align-items:center;">
+      <div style="
+        display:flex;align-items:center;justify-content:center;
+        width:${markerSize}px;height:${markerSize}px;
+        background:${innerColor};
+        border:4px solid ${outerColor};
+        border-radius:50%;
+        font-size:${priceWan >= 10000 ? 9 : 10}px;font-weight:bold;color:white;
+        text-shadow:0 1px 2px rgba(0,0,0,.4);
+        box-shadow:0 2px 6px rgba(0,0,0,.25);
+        line-height:1.1;
+      ">${priceText}</div>
+      ${comLabel ? `<div style="
+        margin-top:-2px;padding:1px 4px;
+        background:rgba(255,255,255,.92);border-radius:6px;
+        font-size:8px;font-weight:600;color:#333;
+        white-space:nowrap;max-width:60px;overflow:hidden;text-overflow:ellipsis;
+        box-shadow:0 1px 3px rgba(0,0,0,.15);
+        border:1px solid rgba(0,0,0,.08);
+      ">${comLabel}</div>` : ''}
+    </div>`;
 
+    const totalH = comLabel ? markerSize + 14 : markerSize;
     const marker = L.marker([tx.lat, tx.lng], {
-      icon: L.divIcon({html: markerHtml, iconSize:[46,46], className:'price-marker'})
+      icon: L.divIcon({html: markerHtml, iconSize:[markerSize + 8, totalH], iconAnchor:[(markerSize+8)/2, totalH/2], className:'price-marker'})
     });
     marker._txPrice = tx.price;
     marker._txUnitPrice = tx.unit_price_ping;
@@ -1009,11 +1055,17 @@ function addLegend(){
   legend.onAdd = function(){
     const div = L.DomUtil.create('div','');
     div.innerHTML = `
-      <div style="background:#fff;padding:10px 12px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.15);font-size:12px;line-height:1.8">
-        <div style="font-weight:700;margin-bottom:4px">總價區間</div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#34a853;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>≤ 2000萬</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#f9ab00;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>2000~4000萬</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#ea4335;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>&gt; 4000萬</span></div>
+      <div style="background:#fff;padding:10px 12px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.15);font-size:11px;line-height:1.8;min-width:140px">
+        <div style="font-weight:700;margin-bottom:4px;font-size:12px">🎯 圓心＝總價</div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#34a853;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>＜1000萬</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#f9ab00;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>1000~2000萬</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#ea4335;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>2000~4000萬</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#c62828;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>＞4000萬</span></div>
+        <div style="font-weight:700;margin:6px 0 4px;font-size:12px">💍 外環＝單價/坪</div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #1b5e20"></div><span>＜20萬</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #f57f17"></div><span>20~40萬</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #e65100"></div><span>40~70萬</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #b71c1c"></div><span>＞70萬</span></div>
       </div>`;
     L.DomEvent.disableScrollPropagation(div);
     L.DomEvent.disableClickPropagation(div);
