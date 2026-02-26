@@ -730,6 +730,9 @@ class LandDataDB:
             if '號' not in addr and '地號' not in addr:
                 stats['discarded'] += 1
                 stats['discard_no_number'] += 1
+                if _VERBOSE and self._verbose_count['discarded'] < _VERBOSE_MAX:
+                    log_print(f'    [丟棄] 無號: {addr}')
+                    self._verbose_count['discarded'] += 1
                 continue
 
             # 使用預計算的 _dedup_key (若 parser 已提供)
@@ -749,6 +752,9 @@ class LandDataDB:
             if dedup_key:
                 if dedup_key in _batch_keys:
                     stats['duplicated'] += 1
+                    if _VERBOSE and self._verbose_count['duplicated'] < _VERBOSE_MAX:
+                        log_print(f'    [重複-batch] {dedup_key}: {addr}')
+                        self._verbose_count['duplicated'] += 1
                     continue
 
                 if dedup_key in _bloom:
@@ -801,6 +807,9 @@ class LandDataDB:
             if '號' not in addr and '地號' not in addr:
                 stats['discarded'] += 1
                 stats['discard_no_number'] += 1
+                if _VERBOSE and self._verbose_count['discarded'] < _VERBOSE_MAX:
+                    log_print(f'    [丟棄] 無號: {addr}')
+                    self._verbose_count['discarded'] += 1
                 continue
 
             dedup_key = tup[-1]  # 最後一個欄位
@@ -808,6 +817,9 @@ class LandDataDB:
             if dedup_key:
                 if dedup_key in _batch_keys:
                     stats['duplicated'] += 1
+                    if _VERBOSE and self._verbose_count['duplicated'] < _VERBOSE_MAX:
+                        log_print(f'    [重複-batch] {dedup_key}: {addr}')
+                        self._verbose_count['duplicated'] += 1
                     continue
                 if dedup_key in _bloom:
                     # bloom hit → 收集待查 DB 確認
