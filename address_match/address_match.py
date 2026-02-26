@@ -228,60 +228,109 @@ def _build_filter_sql(filters, params):
 
 
 def search_structured(conn, parsed, filters, sort_by, limit):
-    """策略 1: 結構化搜尋 (走索引, 最快)"""
-    where_parts = []
-    params = []
+    """策略 1: 結構化搜尋 (走索引, 最快)
 
-    for field in ['county_city', 'district', 'street', 'number', 'floor', 'sub_number']:
-        val = parsed.get(field)
-        if val:
-            where_parts.append(f'{field} = ?')
-            params.append(val)
-
-    # 針對巷、弄的精準比對邏輯
-    # 如果使用者有指定門牌號碼 (number)，則要求巷、弄必須完全符合 (即如果輸入沒巷弄，資料庫也不能有巷弄)
-    if parsed.get('number'):
-        for field in ['lane', 'alley']:
-            val = parsed.get(field, '')
-            if val:
-                where_parts.append(f'{field} = ?')
-                params.append(val)
-            else:
-                where_parts.append(f"({field} = '' OR {field} IS NULL)")
-    else:
-        # 沒有指定門牌時，如果使用者有給巷弄，就過濾巷弄
-        for field in ['lane', 'alley']:
-            val = parsed.get(field, '')
-            if val:
-                where_parts.append(f'{field} = ?')
-                params.append(val)
-
-    if not where_parts:
+    查詢策略 (由精確到寬鬆):
+      Level 1: district + street + lane + number  精確地址
+      Level 2: street + number                    門牌比對
+      Level 3: district + street + lane           巷弄搜尋
+      Level 4: street (+ lane if given)           路段搜尋
+    """
+    street = parsed.get('street')
+    if not street:
         return []
 
-    where_addr = ' AND '.join(where_parts)
+    district = parsed.get('district')
+    lane = parsed.get('lane', '')
+    alley = parsed.get('alley', '')
+    number = parsed.get('number')
+    floor_val = parsed.get('floor')
+    sub_number = parsed.get('sub_number')
+
+    # 構建查詢層級
+    levels = []
+
+    # Level 1: 最精確 — district + street + lane + number
+    if district and number:
+        w = ['district = ?', 'street = ?', 'number = ?']
+        p = [district, street, number]
+        if lane:
+            w.append('lane = ?'); p.append(lane)
+        else:
+            w.append("(lane = '' OR lane IS NULL)")
+        if alley:
+            w.append('alley = ?'); p.append(alley)
+        else:
+            w.append("(alley = '' OR alley IS NULL)")
+        if floor_val:
+            w.append('floor = ?'); p.append(floor_val)
+        if sub_number:
+            w.append('sub_number = ?'); p.append(sub_number)
+        levels.append((w, p))
+
+    # Level 2: street + number (跨區搜尋)
+    if number:
+        w = ['street = ?', 'number = ?']
+        p = [street, number]
+        if lane:
+            w.append('lane = ?'); p.append(lane)
+        else:
+            w.append("(lane = '' OR lane IS NULL)")
+        if alley:
+            w.append('alley = ?'); p.append(alley)
+        else:
+            w.append("(alley = '' OR alley IS NULL)")
+        levels.append((w, p))
+
+    # Level 3: district + street + lane (巷弄範圍)
+    if district and lane:
+        w = ['district = ?', 'street = ?', 'lane = ?']
+        p = [district, street, lane]
+        if alley:
+            w.append('alley = ?'); p.append(alley)
+        levels.append((w, p))
+
+    # Level 4: street + lane (路段+巷)
+    if lane:
+        levels.append((['street = ?', 'lane = ?'], [street, lane]))
+
+    # Level 5: district + street
+    if district:
+        levels.append((['district = ?', 'street = ?'], [district, street]))
+
+    # Level 6: 僅 street
+    levels.append((['street = ?'], [street]))
+
     computed = _build_computed_cols()
     order_sql = SORT_OPTIONS.get(sort_by, SORT_OPTIONS['date'])
 
-    sql = f"""
-    WITH base AS (
-        SELECT *, {computed}
-        FROM land_transaction
-        WHERE {where_addr} AND address != ''
-    ),
-    counted AS (
-        SELECT *, COUNT(*) OVER (PARTITION BY address) AS addr_count
-        FROM base
-    )
-    SELECT * FROM counted
-    """
-    filter_sql = _build_filter_sql(filters, params)
-    if filter_sql:
-        sql += f' WHERE {filter_sql}'
-    sql += f' ORDER BY {order_sql} LIMIT {limit}'
+    for where_parts, base_params in levels:
+        params = list(base_params)
+        where_addr = ' AND '.join(where_parts)
 
-    cursor = conn.execute(sql, params)
-    return [dict(r) for r in cursor.fetchall()]
+        sql = f"""
+        WITH base AS (
+            SELECT *, {computed}
+            FROM land_transaction
+            WHERE {where_addr} AND address != ''
+        ),
+        counted AS (
+            SELECT *, COUNT(*) OVER (PARTITION BY address) AS addr_count
+            FROM base
+        )
+        SELECT * FROM counted
+        """
+        filter_sql = _build_filter_sql(filters, params)
+        if filter_sql:
+            sql += f' WHERE {filter_sql}'
+        sql += f' ORDER BY {order_sql} LIMIT {limit}'
+
+        cursor = conn.execute(sql, params)
+        rows = [dict(r) for r in cursor.fetchall()]
+        if rows:
+            return rows
+
+    return []
 
 
 def search_fts(conn, query, filters, sort_by, limit):
@@ -316,12 +365,15 @@ def search_fts(conn, query, filters, sort_by, limit):
 
 
 def search_like(conn, variants, filters, sort_by, limit):
-    """策略 3: LIKE 後備搜尋"""
+    """策略 3: LIKE 後備搜尋 (限制變體數量避免全表掃描)"""
     computed = _build_computed_cols()
     order_sql = SORT_OPTIONS.get(sort_by, SORT_OPTIONS['date'])
 
-    like_cond = ' OR '.join(['address LIKE ?' for _ in variants])
-    params = [f'%{v}%' for v in variants]
+    # 限制最多 8 個變體，避免大量 OR 導致效能問題
+    limited = variants[:8] if len(variants) > 8 else variants
+
+    like_cond = ' OR '.join(['address LIKE ?' for _ in limited])
+    params = [f'%{v}%' for v in limited]
 
     sql = f"""
     WITH base AS (
@@ -344,25 +396,54 @@ def search_like(conn, variants, filters, sort_by, limit):
     return [dict(r) for r in cursor.fetchall()]
 
 
+def _get_connection(db_path):
+    """建立已優化的 SQLite 連線"""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA cache_size=-50000')   # 50MB cache
+    conn.execute('PRAGMA mmap_size=268435456') # 256MB mmap
+    conn.execute('PRAGMA query_only=ON')       # 唯讀提示，避免 journal 開銷
+    return conn
+
+
+# 模組級連線快取 (同一 db_path 共用)
+_conn_cache = {}
+
+def _get_cached_connection(db_path):
+    """取得快取連線（避免重複開關連線）"""
+    real_path = os.path.realpath(db_path)
+    conn = _conn_cache.get(real_path)
+    if conn is not None:
+        try:
+            conn.execute('SELECT 1')
+            return conn
+        except sqlite3.Error:
+            _conn_cache.pop(real_path, None)
+    conn = _get_connection(db_path)
+    _conn_cache[real_path] = conn
+    return conn
+
+
 def search_address(address, db_path=DEFAULT_DB, filters=None,
-                   sort_by='date', limit=200, show_sql=False):
+                   sort_by='date', limit=200, show_sql=False, conn=None):
     """
     主搜尋函式。依序嘗試:
       1. 結構化搜尋 (解析後欄位, 走索引)
       2. FTS5 全文搜尋
       3. LIKE 變體搜尋
+
+    Args:
+        conn: 可選的已開啟連線 (避免重複開關)
     """
     if not os.path.exists(db_path):
         raise FileNotFoundError(f"找不到資料庫: {db_path}")
 
     filters = filters or {}
     parsed = parse_query(address)
-    variants = generate_address_variants(address)
 
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA cache_size=-50000')  # 50MB cache
-    conn.execute('PRAGMA mmap_size=268435456')  # 256MB mmap
+    own_conn = conn is None
+    if own_conn:
+        conn = _get_cached_connection(db_path)
 
     method = ''
     rows = []
@@ -381,11 +462,15 @@ def search_address(address, db_path=DEFAULT_DB, filters=None,
 
         # 策略 3: LIKE 變體
         if not rows:
+            variants = generate_address_variants(address)
             rows = search_like(conn, variants, filters, sort_by, limit)
             method = 'LIKE 變體'
 
-    finally:
-        conn.close()
+    except sqlite3.Error:
+        # 連線可能已失效，清除快取
+        real_path = os.path.realpath(db_path)
+        _conn_cache.pop(real_path, None)
+        raise
 
     if show_sql:
         print(f'\n  🔧 搜尋策略: {method}')
@@ -393,7 +478,7 @@ def search_address(address, db_path=DEFAULT_DB, filters=None,
 
     return {
         'query': address,
-        'variants': variants,
+        'variants': generate_address_variants(address) if not rows or method != '結構化索引' else [],
         'parsed': parsed,
         'method': method,
         'filters': filters,
@@ -402,6 +487,43 @@ def search_address(address, db_path=DEFAULT_DB, filters=None,
         'results': rows,
         'show_sql': show_sql,
     }
+
+
+def search_address_batch(addresses, db_path=DEFAULT_DB, filters=None,
+                         sort_by='date', limit=100):
+    """
+    批次搜尋多個地址 (共用連線，效能大幅提升)。
+
+    Args:
+        addresses: 地址列表
+        db_path: 資料庫路徑
+        filters: 共用篩選條件
+        sort_by: 排序方式
+        limit: 每個地址的最大結果數
+
+    Returns:
+        list of search result dicts
+    """
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(f"找不到資料庫: {db_path}")
+
+    conn = _get_cached_connection(db_path)
+    results = []
+
+    for addr in addresses:
+        try:
+            result = search_address(
+                addr, db_path=db_path, filters=filters,
+                sort_by=sort_by, limit=limit, conn=conn
+            )
+            results.append(result)
+        except Exception as e:
+            results.append({
+                'query': addr, 'error': str(e),
+                'total': 0, 'results': []
+            })
+
+    return results
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
