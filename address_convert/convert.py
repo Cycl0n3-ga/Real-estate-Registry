@@ -864,8 +864,17 @@ class LandDataDB:
         stats = self._stats
         cur = self.conn.cursor()
         false_positive_inserts = []
+        seen_fp_keys = set()  # 同批次內已處理的 FP key，防止多筆相同 FP key 重複插入
 
         for dedup_key, rec in candidates:
+            # ── 同批次內已是 FP → 直接算 duplicate，不再查 DB ──
+            if dedup_key in seen_fp_keys:
+                stats['duplicated'] += 1
+                if _VERBOSE and self._verbose_count['duplicated'] < _VERBOSE_MAX:
+                    log_print(f'    [重複] FP-dup key={dedup_key}: {rec.get("address", "")}')
+                    self._verbose_count['duplicated'] += 1
+                continue
+
             row = cur.execute(
                 'SELECT id FROM land_transaction WHERE dedup_key = ?',
                 (dedup_key,)
@@ -885,9 +894,10 @@ class LandDataDB:
                         log_print(f'    [重複] id={existing_id} key={dedup_key}: {rec.get("address", "")}')
                         self._verbose_count['duplicated'] += 1
             else:
-                # Bloom false positive → 插入，同時補加入 bloom 避免後續批次重複插入
+                # Bloom false positive → 插入，同時記錄防止同批次重複
                 values = tuple(rec.get(col) for col in LAND_COLUMNS)
                 false_positive_inserts.append((*values, dedup_key))
+                seen_fp_keys.add(dedup_key)
                 self._batch_keys.add(dedup_key)
                 self._bloom.add(dedup_key)  # 補齊：FP 插入後必須加入 bloom
                 stats['inserted'] += 1
@@ -901,9 +911,18 @@ class LandDataDB:
         stats = self._stats
         cur = self.conn.cursor()
         false_positive_inserts = []
+        seen_fp_keys = set()  # 同批次內已處理的 FP key，防止多筆相同 FP key 重複插入
         _n_cols = len(LAND_COLUMNS)
 
         for dedup_key, tup in candidates:
+            # ── 同批次內已是 FP → 直接算 duplicate，不再查 DB ──
+            if dedup_key in seen_fp_keys:
+                stats['duplicated'] += 1
+                if _VERBOSE and self._verbose_count['duplicated'] < _VERBOSE_MAX:
+                    log_print(f'    [重複] FP-dup key={dedup_key}: {tup[2] or ""}')
+                    self._verbose_count['duplicated'] += 1
+                continue
+
             row = cur.execute(
                 'SELECT id FROM land_transaction WHERE dedup_key = ?',
                 (dedup_key,)
@@ -925,8 +944,9 @@ class LandDataDB:
                         log_print(f'    [重複] id={existing_id} key={dedup_key}: {tup[2] or ""}')
                         self._verbose_count['duplicated'] += 1
             else:
-                # Bloom false positive → 插入，同時補加入 bloom 避免後續批次重複插入
+                # Bloom false positive → 插入，同時記錄防止同批次重複
                 false_positive_inserts.append(tup)
+                seen_fp_keys.add(dedup_key)
                 self._batch_keys.add(dedup_key)
                 self._bloom.add(dedup_key)  # 補齊：FP 插入後必須加入 bloom
                 stats['inserted'] += 1
