@@ -25,6 +25,7 @@ import re
 import sqlite3
 import sys
 import time
+import threading
 from pathlib import Path
 from collections import defaultdict
 from typing import Optional, Dict, List
@@ -177,6 +178,8 @@ class Community2AddressLookup:
         self._norm_to_original = {}
         # DB 持久連線（用於 on-demand 查詢）
         self._conn = None
+        # 線程鎖（用於保護共享連線）
+        self._conn_lock = threading.Lock()
 
         self._load_data()
 
@@ -199,10 +202,13 @@ class Community2AddressLookup:
             print(f"⚠️  資料庫不存在: {DB_PATH}")
             return
 
-        self._conn = sqlite3.connect(str(DB_PATH))
+        # 允許跨線程使用（Flask 多線程環境）
+        self._conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA cache_size=-64000")
         self._conn.execute("PRAGMA mmap_size=268435456")
+        # 用於保護共享連線的鎖
+        self._conn_lock = threading.Lock()
 
         # 只載入 DISTINCT 建案名稱（利用 community_name 索引，~60ms）
         cursor = self._conn.execute("""
@@ -231,11 +237,12 @@ class Community2AddressLookup:
             return {'district': '', 'city': '', 'source': '', 'tx_count': 0}
 
         original_name = self._norm_to_original.get(norm_name, norm_name)
-        row = self._conn.execute("""
-            SELECT MIN(district) as district, MIN(county_city) as city, COUNT(*) as tx_count
-            FROM land_transaction
-            WHERE community_name = ?
-        """, (original_name,)).fetchone()
+        with self._conn_lock:
+            row = self._conn.execute("""
+                SELECT MIN(district) as district, MIN(county_city) as city, COUNT(*) as tx_count
+                FROM land_transaction
+                WHERE community_name = ?
+            """, (original_name,)).fetchone()
 
         if row:
             info = {
@@ -327,11 +334,12 @@ class Community2AddressLookup:
         """從 DB 按需查詢建案對應的地址（使用 community_name 索引，<5ms）"""
         if not self._conn:
             return []
-        rows = self._conn.execute("""
-            SELECT DISTINCT address
-            FROM land_transaction
-            WHERE community_name = ? AND address IS NOT NULL AND address != ''
-        """, (community_name,)).fetchall()
+        with self._conn_lock:
+            rows = self._conn.execute("""
+                SELECT DISTINCT address
+                FROM land_transaction
+                WHERE community_name = ? AND address IS NOT NULL AND address != ''
+            """, (community_name,)).fetchall()
         return [r[0].strip() for r in rows if r[0]]
 
     def query(self, community_name: str, top_n: int = 5, use_591: bool = None) -> dict:

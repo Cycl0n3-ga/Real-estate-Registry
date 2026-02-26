@@ -27,6 +27,16 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
   padding:0 16px;z-index:1100;gap:12px;
 }
 .header .logo{font-size:20px;font-weight:700;white-space:nowrap}
+.header .loc-toggle{
+  display:flex;gap:4px;background:rgba(255,255,255,.15);
+  border-radius:20px;padding:2px;margin-left:12px;
+}
+.header .loc-toggle button{
+  border:none;background:transparent;color:rgba(255,255,255,.7);
+  padding:5px 12px;border-radius:18px;cursor:pointer;font-size:12px;
+  transition:.2s;white-space:nowrap;
+}
+.header .loc-toggle button.active{background:#fff;color:var(--primary);font-weight:600}
 .header .unit-toggle{
   margin-left:auto;display:flex;gap:4px;background:rgba(255,255,255,.15);
   border-radius:20px;padding:2px;
@@ -172,6 +182,16 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 .tx-card.price-high{border-left-color:#ea4335;}
 .tx-card.price-mid{border-left-color:#f9ab00;}
 .tx-card.price-low{border-left-color:#34a853;}
+.tx-card.special{opacity:.55;border-left-style:dashed;}
+.tx-parking-tag{display:inline-flex;align-items:center;padding:1px 6px;background:#fff3e0;color:#e65100;border-radius:8px;font-size:10px;font-weight:600;border:1px solid #ffe0b2;margin-left:4px;}
+.cluster-analysis{background:#f0f4ff;border:1px solid #c8d6f0;border-radius:8px;padding:10px 12px;margin:8px 0;font-size:12px;}
+.cluster-analysis h4{font-size:13px;margin-bottom:6px;color:var(--primary-dark);}
+.cluster-analysis .ca-row{display:flex;justify-content:space-between;padding:2px 0;}
+.cluster-analysis .ca-label{color:var(--text2);}
+.cluster-analysis .ca-val{font-weight:700;}
+.cluster-analysis .ca-communities{margin-top:6px;padding-top:6px;border-top:1px solid #dde4f0;}
+.cluster-analysis .ca-community-item{display:flex;justify-content:space-between;padding:2px 0;}
+.special-badge{display:inline-block;background:#ffebee;color:#c62828;padding:1px 5px;border-radius:6px;font-size:9px;font-weight:600;margin-left:4px;}
 
 .tx-addr{
   grid-column:1;font-size:13px;font-weight:700;color:var(--text);
@@ -279,6 +299,10 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 <div class="header">
   <button class="hamburger" onclick="toggleSidebar()">☰</button>
   <div class="logo">🏢 良富居地產</div>
+  <div class="loc-toggle" title="位置模式：精確(OSM離線)或建案(DB)">
+    <button id="btnLocDb" class="active" onclick="setLocMode('db')">🏘️ 建案</button>
+    <button id="btnLocOsm" onclick="setLocMode('osm')">📍 精確</button>
+  </div>
   <div class="unit-toggle">
     <button id="btnPing" class="active" onclick="setUnit('ping')">坪</button>
     <button id="btnSqm" onclick="setUnit('sqm')">m²</button>
@@ -332,6 +356,12 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
       <div>
         <label>民國年範圍</label>
         <input id="fYear" type="text" placeholder="如 110-114">
+      </div>
+      <div class="full-row" style="display:flex;align-items:center;gap:8px;padding:4px 0">
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px;color:var(--text)">
+          <input type="checkbox" id="fExcludeSpecial"> 排除特殊交易
+        </label>
+        <span style="font-size:10px;color:#999" title="親友、員工、共有人、法拍、調協等非市場正常交易">ℹ️</span>
       </div>
       <div class="filter-btns">
         <button class="btn-clear" onclick="clearFilters()">清除</button>
@@ -392,6 +422,7 @@ let communitySummaries = {};
 let locationMarker = null;
 let locationCircle = null;
 let lastSearchType = 'none'; // 'keyword' | 'area' | 'none'
+let locationMode = 'db'; // 'osm' | 'db'
 
 // ═══════════════════════════════════════════════════════════════
 // 地圖初始化
@@ -486,6 +517,14 @@ function setUnit(u){
   renderSummary();
 }
 
+function setLocMode(m){
+  locationMode = m;
+  document.getElementById('btnLocDb').classList.toggle('active', m==='db');
+  document.getElementById('btnLocOsm').classList.toggle('active', m==='osm');
+  // 自動重新搜尋以取得新座標
+  if(txData.length > 0) rerunSearch();
+}
+
 // ═══════════════════════════════════════════════════════════════
 // 格式化工具
 // ═══════════════════════════════════════════════════════════════
@@ -545,6 +584,7 @@ function toggleFilters(){
 function clearFilters(){
   ['fBuildType','fRooms','fPing','fRatio','fUnitPrice','fPrice','fYear']
     .forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
+  const cb = document.getElementById('fExcludeSpecial'); if(cb) cb.checked=false;
 }
 
 function getFilterParams(){
@@ -563,6 +603,8 @@ function getFilterParams(){
   if(pr) p += '&price=' + encodeURIComponent(pr);
   const yr = document.getElementById('fYear').value.trim();
   if(yr) p += '&year=' + encodeURIComponent(yr);
+  const exSp = document.getElementById('fExcludeSpecial');
+  if(exSp && exSp.checked) p += '&exclude_special=1';
   return p;
 }
 
@@ -630,7 +672,7 @@ async function doSearch(){
 
   const limitVal = document.getElementById('limitSelect').value;
   const url = '/api/search?keyword=' + encodeURIComponent(kw) +
-              '&limit=' + limitVal + getFilterParams();
+              '&limit=' + limitVal + '&location_mode=' + locationMode + getFilterParams();
   try{
     const resp = await fetch(url);
     const ctype = resp.headers.get('content-type') || '';
@@ -662,7 +704,7 @@ async function doAreaSearch(){
   results.innerHTML = '<div class="loading">🔍 搜尋此區域成交紀錄…</div>';
 
   const limitVal = document.getElementById('limitSelect').value;
-  const url = `/api/search_area?south=${bounds.getSouth()}&north=${bounds.getNorth()}&west=${bounds.getWest()}&east=${bounds.getEast()}&limit=${limitVal}` + getFilterParams();
+  const url = `/api/search_area?south=${bounds.getSouth()}&north=${bounds.getNorth()}&west=${bounds.getWest()}&east=${bounds.getEast()}&limit=${limitVal}&location_mode=${locationMode}` + getFilterParams();
 
   try{
     const resp = await fetch(url);
@@ -824,8 +866,14 @@ function renderTxCard(tx, idx, inGroup){
     : '';
   const cnRow = cnTag ? `<div class="tx-community-row">${cnTag}</div>` : '';
 
-  return `<div class="tx-card${isActive?' active':''}${priceClass}" onclick="selectTx(${idx})" data-idx="${idx}">
-    <div class="tx-addr" title="${escAttr(tx.address)}">${escHtml(tx.address)}</div>
+  const specialCls = tx.is_special ? ' special' : '';
+  const specialBadge = tx.is_special ? '<span class="special-badge">特殊</span>' : '';
+  const parkingTag = tx.has_parking
+    ? `<span class="tx-parking-tag">🚗 含車位${tx.parking_price > 0 ? ' ' + fmtWan(tx.parking_price) : ''}</span>`
+    : '';
+
+  return `<div class="tx-card${isActive?' active':''}${priceClass}${specialCls}" onclick="selectTx(${idx})" data-idx="${idx}">
+    <div class="tx-addr" title="${escAttr(tx.address)}">${escHtml(tx.address)}${specialBadge}</div>
     ${cnRow}
     <div class="tx-detail-row">
       <span>📅 ${tx.date||'-'}</span>
@@ -834,6 +882,8 @@ function renderTxCard(tx, idx, inGroup){
       ${tx.floor ? `<span>🏢 ${escHtml(String(tx.floor))}F/${escHtml(String(tx.total_floors))}F</span>` : ''}
       ${tx.public_ratio>0 ? `<span class="tag">公設${tx.public_ratio}%</span>` : ''}
       ${tx.building_type ? `<span class="tag">${escHtml(tx.building_type)}</span>` : ''}
+      ${parkingTag}
+      ${tx.note ? `<span style="color:#888;font-size:10px">📝 ${escHtml(tx.note.length>30?tx.note.substring(0,30)+'…':tx.note)}</span>` : ''}
     </div>
     <div class="tx-price-col">
       <div class="tx-unit">${fmtUnitPrice(tx.unit_price_ping, tx.unit_price_sqm)}</div>
@@ -927,6 +977,30 @@ function plotMarkers(fitBounds = true){
   markerClusterGroup.clearLayers();
   const boundsArr = [];
 
+  // ── 重疊偵測：相同座標的 marker 做微小偏移 ──
+  const coordCounts = {};
+  txData.forEach((tx, i) => {
+    if(!tx.lat || !tx.lng) return;
+    const key = tx.lat.toFixed(6) + ',' + tx.lng.toFixed(6);
+    if(!coordCounts[key]) coordCounts[key] = [];
+    coordCounts[key].push(i);
+  });
+
+  // 為重疊的 marker 計算偏移（圓形排列）
+  const offsetMap = {};
+  Object.values(coordCounts).forEach(indices => {
+    if(indices.length <= 1) return;
+    const n = indices.length;
+    const radius = 0.00008; // ~8m
+    indices.forEach((idx, j) => {
+      const angle = (2 * Math.PI * j) / n;
+      offsetMap[idx] = {
+        dlat: radius * Math.cos(angle),
+        dlng: radius * Math.sin(angle)
+      };
+    });
+  });
+
   // 顏色映射函數
   function getTotalPriceColor(price){
     const wan = (price||0) / 10000;
@@ -947,6 +1021,13 @@ function plotMarkers(fitBounds = true){
 
   txData.forEach((tx, i) => {
     if(!tx.lat || !tx.lng) return;
+
+    // 套用重疊偏移
+    let lat = tx.lat, lng = tx.lng;
+    if(offsetMap[i]){
+      lat += offsetMap[i].dlat;
+      lng += offsetMap[i].dlng;
+    }
 
     const innerColor = getTotalPriceColor(tx.price);
     const outerColor = getUnitPriceColor(tx.unit_price_ping);
@@ -987,7 +1068,7 @@ function plotMarkers(fitBounds = true){
     </div>`;
 
     const totalH = comLabel ? markerSize + 14 : markerSize;
-    const marker = L.marker([tx.lat, tx.lng], {
+    const marker = L.marker([lat, lng], {
       icon: L.divIcon({html: markerHtml, iconSize:[markerSize + 8, totalH], iconAnchor:[(markerSize+8)/2, totalH/2], className:'price-marker'})
     });
     marker._txPrice = tx.price;
@@ -1002,7 +1083,7 @@ function plotMarkers(fitBounds = true){
     });
 
     markerClusterGroup.addLayer(marker);
-    boundsArr.push([tx.lat, tx.lng]);
+    boundsArr.push([lat, lng]);
   });
 
   if(fitBounds && boundsArr.length > 0){
@@ -1125,10 +1206,60 @@ function locateMe(){
 // ═══════════════════════════════════════════════════════════════
 function showClusterList(items){
   const container = document.getElementById('results');
+
+  // ── 近兩年中位數分析（排除特殊交易）──
+  const now = new Date();
+  const twoYearsAgo = (now.getFullYear() - 1911 - 2) * 10000; // 民國年
+  const normalRecent = items.filter(({tx}) => {
+    if(tx.is_special) return false;
+    const dr = parseInt(String(tx.date_raw||'0').replace(/\D/g,''),10);
+    return dr >= twoYearsAgo;
+  });
+
+  // 中位數
+  function median(arr){
+    if(!arr.length) return 0;
+    const s = arr.slice().sort((a,b)=>a-b);
+    const m = Math.floor(s.length/2);
+    return s.length%2 ? s[m] : (s[m-1]+s[m])/2;
+  }
+  const upArr = normalRecent.map(({tx})=>tx.unit_price_ping).filter(v=>v>0);
+  const prArr = normalRecent.map(({tx})=>tx.price).filter(v=>v>0);
+  const medianUp = median(upArr);
+  const medianPr = median(prArr);
+
+  // 社區/建案分組
+  const comMap = {};
+  items.forEach(({tx}) => {
+    const cn = tx.community_name || '未知建案';
+    if(!comMap[cn]) comMap[cn] = {count:0, ups:[]};
+    comMap[cn].count++;
+    if(!tx.is_special && tx.unit_price_ping>0) comMap[cn].ups.push(tx.unit_price_ping);
+  });
+  const comList = Object.entries(comMap).sort((a,b)=>b[1].count-a[1].count);
+
+  let analysisHtml = '';
+  if(items.length >= 2){
+    analysisHtml = `<div class="cluster-analysis">
+      <h4>📊 重疊位置分析（近兩年，排除特殊交易）</h4>
+      <div class="ca-row"><span class="ca-label">有效筆數</span><span class="ca-val">${normalRecent.length} / ${items.length} 筆</span></div>
+      <div class="ca-row"><span class="ca-label">單價中位數</span><span class="ca-val">${medianUp>0?fmtUnitPrice(medianUp, medianUp/3.30579):'N/A'}</span></div>
+      <div class="ca-row"><span class="ca-label">總價中位數</span><span class="ca-val">${medianPr>0?fmtWan(medianPr):'N/A'}</span></div>
+      <div class="ca-communities">
+        <div style="font-weight:600;margin-bottom:4px">🏠 社區/建案</div>
+        ${comList.map(([cn,st])=>{
+          const avg = st.ups.length ? Math.round(st.ups.reduce((a,b)=>a+b,0)/st.ups.length) : 0;
+          return `<div class="ca-community-item"><span>${escHtml(cn)} (${st.count}筆)</span><span>${avg>0?fmtUnitPrice(avg, avg/3.30579):'-'}</span></div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+
   let html = `<div class="cluster-list-header">
     <span>📍 此位置 ${items.length} 筆重疊資料</span>
     <button onclick="renderResults()">↩ 返回全列表</button>
   </div>`;
+  html += analysisHtml;
   items.forEach(({tx, origIdx}) => {
     html += renderTxCard(tx, origIdx, false);
   });

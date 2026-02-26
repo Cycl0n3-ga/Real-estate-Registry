@@ -1348,11 +1348,20 @@ def _parse_api_row(row) -> Optional[dict]:
     building_type_j = build_type or j.get('b', '') or ''
     note = j.get('note', '') or ''
 
-    total_price = parse_price(tp_raw) or parse_price(j.get('tp'))
-    unit_price = safe_float(up_raw) or safe_float(j.get('cp'))
+    # ⚠ transactions.db 欄位名不符實際內容:
+    #   DB total_price 實際存的是 JSON 'p' (每坪單價, 如 '721,048')
+    #   DB unit_price  實際存的是 JSON 'v' (房型格局, 如 '2房2廳2衛')
+    # 正確來源: JSON 'tp' = 總價, JSON 'p' = 每坪單價
+    total_price = parse_price(j.get('tp')) or parse_price(tp_raw)
+    unit_price = safe_float(j.get('p')) or safe_float(j.get('cp'))
     building_area = safe_float(area_col) or safe_float(j.get('s'))
 
     serial_no = f'api_{sq}' if sq else None
+
+    # 預計算 dedup_key (與 CSV 路徑一致: date[:7]|strip_city(norm(addr))|total_price)
+    addr_norm = strip_city(norm_addr_simple(addr_clean)) if addr_clean else ''
+    d = transaction_date.replace('/', '')[:7] if transaction_date else ''
+    _dedup_key = f"{d}|{addr_norm}|{int(total_price or 0)}" if addr_norm else None
 
     lat_val = lat if (lat and lat != 0) else None
     lng_val = lon if (lon and lon != 0) else None
@@ -1415,6 +1424,7 @@ def _parse_api_row(row) -> Optional[dict]:
         'community_name':    community or '',
         'lat':               lat_val,
         'lng':               lng_val,
+        '_dedup_key':        _dedup_key,
     }
 
 
@@ -1799,6 +1809,19 @@ def convert_v4(input_files: List[str], target_path: str,
 
     elapsed = time.time() - t0
     log_print(f'\n🎉 全部完成! 耗時 {elapsed:.1f}s')
+
+    # ── 去重完整性驗證 ──
+    dup_check = db.conn.execute(
+        'SELECT dedup_key, COUNT(*) AS cnt FROM land_transaction '
+        'WHERE dedup_key IS NOT NULL GROUP BY dedup_key HAVING cnt > 1 '
+        'ORDER BY cnt DESC LIMIT 20'
+    ).fetchall()
+    if dup_check:
+        log_print(f'\n⚠️  去重驗證警告: 發現 {len(dup_check)} 組重複 dedup_key!')
+        for dk, cnt in dup_check[:10]:
+            log_print(f'    {dk} × {cnt}')
+    else:
+        log_print(f'\n✅ 去重驗證通過: 無重複 dedup_key')
 
     # 最終總覽
     db.reset_stats()
