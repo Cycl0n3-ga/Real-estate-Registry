@@ -707,9 +707,10 @@ class LandDataDB:
           1. 使用預計算的 _dedup_key (若有)
           2. 批次 bloom filter 檢查 (Python set 去重同批重複)
           3. bloom hit → 查 DB → enrich 或 duplicate
-          4. 新記錄 → 一次 executemany 插入
+          4. 新記錄 → sub-batch executemany 插入
 
-        比 upsert_record 快 2-3 倍 (減少 per-record Python 開銷)。
+        內部以 _SUB_BATCH 為單位 flush + 清 batch_keys，
+        確保跨 sub-batch 的重複走 bloom → DB → enrich。
         """
         batch_insert = []
         enrich_candidates = []  # bloom hit → 需檢查 DB
@@ -718,6 +719,7 @@ class LandDataDB:
         _bloom = self._bloom
         _batch_keys = self._batch_keys
         stats = self._stats
+        _SUB_BATCH = 10000
 
         for rec in records:
             stats['total_scanned'] += 1
@@ -769,16 +771,21 @@ class LandDataDB:
             batch_insert.append((*values, dedup_key))
             stats['inserted'] += 1
 
-        # 批量插入新記錄
+            # sub-batch flush: 寫入 DB + 處理 enrich + 清 batch_keys
+            if len(batch_insert) >= _SUB_BATCH:
+                self.conn.executemany(INSERT_DEDUP_SQL, batch_insert)
+                batch_insert = []
+                if enrich_candidates:
+                    self._process_enrich_records(enrich_candidates)
+                    enrich_candidates = []
+                _batch_keys.clear()
+
+        # 剩餘的 tail batch
         if batch_insert:
             self.conn.executemany(INSERT_DEDUP_SQL, batch_insert)
-
-        # 處理 bloom hit: 查 DB → enrich 或 duplicate
         if enrich_candidates:
             self._process_enrich_records(enrich_candidates)
-
-        # 每次呼叫後清除 batch_keys，確保跨批次重複走 bloom → DB → enrich
-        self._batch_keys.clear()
+        _batch_keys.clear()
 
     def fast_insert_tuples(self, tuples_list):
         """
@@ -787,13 +794,15 @@ class LandDataDB:
         每個 tuple 格式: (*LAND_COLUMNS_values, dedup_key)
         address 欄位在 tuple[2]，dedup_key 在 tuple[-1]。
 
-        bloom hit 時會查 DB 確認 → enrich 或 duplicate。
+        內部以 _SUB_BATCH 為單位 flush + 清 batch_keys，
+        確保跨 sub-batch 的重複走 bloom → DB → enrich。
         """
         batch_insert = []
         enrich_candidates = []  # bloom hit → 需檢查 DB
         _bloom = self._bloom
         _batch_keys = self._batch_keys
         stats = self._stats
+        _SUB_BATCH = 10000  # 與舊版 BATCH_SIZE 一致
 
         for tup in tuples_list:
             stats['total_scanned'] += 1
@@ -830,16 +839,21 @@ class LandDataDB:
             batch_insert.append(tup)
             stats['inserted'] += 1
 
+            # sub-batch flush: 寫入 DB + 處理 enrich + 清 batch_keys
+            if len(batch_insert) >= _SUB_BATCH:
+                self.conn.executemany(INSERT_DEDUP_SQL, batch_insert)
+                batch_insert = []
+                if enrich_candidates:
+                    self._process_enrich_tuples(enrich_candidates)
+                    enrich_candidates = []
+                _batch_keys.clear()
+
+        # 剩餘的 tail batch
         if batch_insert:
             self.conn.executemany(INSERT_DEDUP_SQL, batch_insert)
-
-        # 處理 bloom hit: 查 DB → enrich 或 duplicate
         if enrich_candidates:
             self._process_enrich_tuples(enrich_candidates)
-
-        # 每次呼叫後清除 batch_keys，確保跨批次重複走 bloom → DB → enrich
-        # (同批次內的去重已在上方 loop 完成)
-        self._batch_keys.clear()
+        _batch_keys.clear()
 
     # ------------------------------------------------------------------
     # enrich 處理 (bloom hit 後查 DB 確認)
