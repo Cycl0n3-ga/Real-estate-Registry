@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-良富居地產 v4.2 — 後端 API 伺服器
+良富居地產 v4.3 — 後端 API 伺服器
 整合 address_match、com2address、address2com、OSM geocoding
 使用 Flask + SQLite (land_data.db)
 
-v4.2 改動:
-- OSM 批次定位加速（直接 osm_index.batch_geocode，~100x 提升）
-- 建案/地址群組化 marker（同建案合併、不再 spider）
-- 地址去縣市前綴、修正重複行政區
-- 特殊交易過濾 + 車位顯示 + 行政區後過濾
-- 模組化: data_utils.py 抽出資料格式化與統計
+v4.3 改動:
+- 雙圈 SVG marker（外環總價 + 內圈單價，使用者可自訂）
+- 近兩年價格分析（排除特殊交易）顯示在圈內
+- 手機版優化（響應式 + 自動收合 + 觸控友善）
+- Flask Compress (gzip/brotli) 加速 API 回應
+- lat/lng DB 索引加速區域搜尋
+- 設定面板（localStorage 持久化）
 """
 
 import os
@@ -22,6 +23,7 @@ import sqlite3
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+from flask_compress import Compress
 
 # ── 路徑設定 ──────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent                # land/web
@@ -52,6 +54,8 @@ from data_utils import (
 # ── Flask 設定 ────────────────────────────────────────────────────────────────
 app = Flask(__name__, static_folder="static")
 CORS(app)
+Compress(app)
+app.config['COMPRESS_MIMETYPES'] = ['application/json', 'text/html', 'text/css', 'application/javascript']
 
 # ── 全域錯誤處理 ──────────────────────────────────────────────────────────────
 @app.errorhandler(404)
@@ -83,6 +87,29 @@ com2addr_ready = False
 geocoder_engine = None
 geocoder_ready = False
 _community_coords_cache = {}  # community_name → (lat, lng)
+_search_cache = {}             # cache_key → (result_json, timestamp)
+_CACHE_TTL = 180               # 3 分鐘快取
+
+
+def _get_cached(cache_key):
+    """取得快取結果（None 表示未命中）"""
+    if cache_key in _search_cache:
+        result, ts = _search_cache[cache_key]
+        if time.time() - ts < _CACHE_TTL:
+            return result
+        del _search_cache[cache_key]
+    return None
+
+
+def _set_cache(cache_key, result):
+    """設定快取"""
+    _search_cache[cache_key] = (result, time.time())
+    # 限制快取大小
+    if len(_search_cache) > 200:
+        now = time.time()
+        expired = [k for k, (_, ts) in _search_cache.items() if now - ts > _CACHE_TTL]
+        for k in expired:
+            del _search_cache[k]
 
 
 def _build_community_coords_cache():
@@ -292,6 +319,13 @@ def api_search():
     location_mode = request.args.get("location_mode", "db").strip()
     limit = min(int(request.args.get("limit", 500)), 2000)
     filters = parse_filters_from_request()
+    exclude_special = request.args.get("exclude_special", "").lower() in ("1", "true", "yes")
+
+    # 快取鍵（用 request query string 最簡單）
+    cache_key = f"search:{request.query_string.decode('utf-8', errors='ignore')}"
+    cached = _get_cached(cache_key)
+    if cached:
+        return jsonify(cached)
 
     community_name = None
     search_type = "address"
@@ -393,7 +427,6 @@ def api_search():
     osm_cache = batch_osm_geocode(merged_raw, geocoder_engine) if location_mode == "osm" else None
 
     # 格式化（含座標策略）
-    exclude_special = request.args.get("exclude_special", "").lower() in ("1", "true", "yes")
     all_transactions = [format_tx_row(r, location_mode, osm_cache, normalize_address, _community_coords_cache) for r in merged_raw]
     if exclude_special:
         all_transactions = [t for t in all_transactions if not t.get("is_special")]
@@ -401,7 +434,7 @@ def api_search():
     summary = compute_summary(all_transactions)
     community_summaries = build_community_summaries(all_transactions)
 
-    return jsonify(clean_nan({
+    result_data = clean_nan({
         "success": True,
         "keyword": keyword,
         "search_type": search_type,
@@ -411,7 +444,9 @@ def api_search():
         "community_summaries": community_summaries,
         "summary": summary,
         "total": len(all_transactions),
-    }))
+    })
+    _set_cache(cache_key, result_data)
+    return jsonify(result_data)
 
 
 @app.route("/api/search_area", methods=["GET"])
@@ -528,7 +563,7 @@ def api_stats():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("🏢 良富居地產 v4.2 — API 伺服器")
+    print("🏢 良富居地產 v4.3 — API 伺服器")
     print("=" * 60)
     print(f"📁 資料庫: {DB_PATH}")
     print(f"🌐 http://localhost:5001")

@@ -285,12 +285,62 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
   background:rgba(255,255,255,.7);border-radius:8px;padding:1px 6px;
   font-size:10px;color:#333;font-weight:600;
 }
+/* ========== 設定面板 ========== */
+.settings-btn{background:none;border:none;color:#fff;font-size:18px;cursor:pointer;padding:4px 8px;border-radius:8px;transition:.2s}
+.settings-btn:hover{background:rgba(255,255,255,.2)}
+.settings-panel{
+  position:fixed;top:var(--header-h);right:0;width:280px;max-width:90vw;max-height:calc(100vh - var(--header-h));
+  background:#fff;box-shadow:-4px 0 20px rgba(0,0,0,.12);z-index:1200;
+  transform:translateX(100%);transition:transform .3s;overflow-y:auto;padding:16px;border-radius:0 0 0 12px;
+}
+.settings-panel.open{transform:translateX(0)}
+.settings-panel h3{font-size:15px;font-weight:700;margin-bottom:12px;color:var(--text)}
+.settings-panel label{font-size:12px;color:var(--text2);margin-bottom:4px;display:block}
+.settings-panel select{width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:12px;outline:none}
+.settings-group{margin-bottom:14px}
+.settings-group-title{font-size:13px;font-weight:600;color:var(--primary);margin-bottom:6px}
+.settings-overlay{position:fixed;inset:0;background:rgba(0,0,0,.15);z-index:1150;display:none}
+.settings-overlay.show{display:block}
+
+/* ========== 快速篩選 ========== */
+.quick-filters{
+  display:flex;gap:4px;padding:6px 12px;border-bottom:1px solid var(--border);
+  background:#fafbfc;flex-wrap:wrap;align-items:center;
+}
+.quick-filters span{font-size:10px;color:var(--text2);margin-right:2px}
+.quick-filters button{
+  padding:3px 10px;font-size:11px;border:1px solid var(--border);
+  border-radius:14px;background:#fff;cursor:pointer;transition:.2s;
+  color:var(--text2);
+}
+.quick-filters button.active{background:#e3f0ff;color:var(--primary);border-color:var(--primary);font-weight:600}
+.quick-filters button:hover{background:#f0f4ff}
+
 /* ========== 手機 ========== */
 @media(max-width:768px){
-  .hamburger{display:block}
+  .hamburger{display:flex;align-items:center;justify-content:center;width:38px;height:38px}
+  .header .logo{font-size:16px}
+  .header .loc-toggle button{padding:4px 8px;font-size:11px}
+  .header .unit-toggle button{padding:4px 10px;font-size:12px}
   .sidebar{width:100%;transform:translateX(-100%)}
   .sidebar.open{transform:translateX(0)}
   .map-wrap{left:0}
+  .sort-bar{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .sort-bar::-webkit-scrollbar{display:none}
+  .sort-bar button{white-space:nowrap;flex-shrink:0}
+  .tx-card{padding:8px 10px 8px 12px}
+  .tx-price{font-size:14px}
+  .community-stats{grid-template-columns:repeat(3,1fr)}
+  .search-row input{font-size:16px}
+  .map-controls{bottom:16px;right:8px}
+  .map-controls button{width:36px;height:36px;font-size:18px}
+  .map-controls .area-search-btn{font-size:12px!important;padding:0 12px!important;height:34px}
+  .settings-panel{width:100%;max-width:100vw;border-radius:0}
+}
+@media(max-width:400px){
+  .header{padding:0 8px;gap:6px}
+  .header .loc-toggle{margin-left:4px}
+  .header .logo{font-size:14px}
 }
 </style>
 </head>
@@ -307,6 +357,38 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
   <div class="unit-toggle">
     <button id="btnPing" class="active" onclick="setUnit('ping')">坪</button>
     <button id="btnSqm" onclick="setUnit('sqm')">m²</button>
+  </div>
+  <button class="settings-btn" onclick="toggleSettings()" title="圓圈顯示設定">⚙️</button>
+</div>
+
+<!-- SETTINGS PANEL -->
+<div class="settings-overlay" id="settingsOverlay" onclick="toggleSettings()"></div>
+<div class="settings-panel" id="settingsPanel">
+  <h3>⚙️ 圓圈顯示設定</h3>
+  <div class="settings-group">
+    <div class="settings-group-title">🔴 外環顏色</div>
+    <select id="sOuter" onchange="applySettings()">
+      <option value="total_price">總價</option>
+      <option value="unit_price">單價/坪</option>
+    </select>
+  </div>
+  <div class="settings-group">
+    <div class="settings-group-title">🟢 內圈顏色</div>
+    <select id="sInner" onchange="applySettings()">
+      <option value="unit_price">單價/坪</option>
+      <option value="total_price">總價</option>
+    </select>
+  </div>
+  <div class="settings-group">
+    <div class="settings-group-title">📊 價格計算方式</div>
+    <select id="sContent" onchange="applySettings()">
+      <option value="recent2yr">近兩年均價(排除特殊)</option>
+      <option value="all">全期間均價</option>
+    </select>
+  </div>
+  <div style="font-size:11px;color:#999;margin-top:8px;line-height:1.6">
+    💡 變更後地圖自動重繪<br>
+    🎯 外環＝第一指標，內圈＝第二指標
   </div>
 </div>
 
@@ -371,6 +453,15 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
     </div>
   </div>
 
+  <!-- Quick Filters -->
+  <div class="quick-filters">
+    <span>快速:</span>
+    <button onclick="quickFilter('1yr')" id="qf1yr">近一年</button>
+    <button onclick="quickFilter('2yr')" id="qf2yr">近兩年</button>
+    <button onclick="quickFilter('nospecial')" id="qfNoSpec">排除特殊</button>
+    <button onclick="quickFilter('clear')">✕ 清除</button>
+  </div>
+
   <!-- Sort -->
   <div class="sort-bar">
     <button class="active" data-sort="date" onclick="setSort(this)">日期</button>
@@ -424,6 +515,7 @@ let locationMarker = null;
 let locationCircle = null;
 let lastSearchType = 'none'; // 'keyword' | 'area' | 'none'
 let locationMode = 'db'; // 'osm' | 'db'
+let markerSettings = {outerMode:'total_price', innerMode:'unit_price', contentMode:'recent2yr'};
 
 // ═══════════════════════════════════════════════════════════════
 // 地圖初始化
@@ -442,9 +534,7 @@ function initMap(){
     zoomToBoundsOnClick: true,
     iconCreateFunction: function(cluster) {
       const markers = cluster.getAllChildMarkers();
-      // 計算真正交易筆數（每個 leaf 可能代表一群）
-      let totalCount = 0;
-      let totalPrice = 0, totalUnit = 0, validP = 0, validU = 0;
+      let totalCount = 0, totalPrice = 0, totalUnit = 0, validP = 0, validU = 0;
       markers.forEach(m => {
         const gc = m._groupCount || 1;
         totalCount += gc;
@@ -452,42 +542,40 @@ function initMap(){
         if(m._avgUnitPrice && m._avgUnitPrice > 0){ totalUnit += m._avgUnitPrice * gc; validU += gc; }
       });
 
-      // 檢查是否全部同一社區
       const labels = markers.map(m => m._groupLabel).filter(Boolean);
       const uniqueLabels = [...new Set(labels)];
       const sameComm = uniqueLabels.length === 1;
       const commLabel = sameComm ? uniqueLabels[0].substring(0, 6) : '';
 
-      let dim = 42;
-      if(totalCount >= 100) dim = 58;
-      else if(totalCount >= 30) dim = 52;
-      else if(totalCount >= 10) dim = 46;
+      let sz = 44;
+      if(totalCount >= 100) sz = 60;
+      else if(totalCount >= 30) sz = 54;
+      else if(totalCount >= 10) sz = 48;
 
-      const avgWan = validP > 0 ? (totalPrice / validP / 10000) : 0;
+      const avgPriceWan = validP > 0 ? (totalPrice / validP / 10000) : 0;
       const avgUnitWan = validU > 0 ? (totalUnit / validU / 10000) : 0;
 
-      let priceLabel = '';
-      if(avgWan >= 10000) priceLabel = (avgWan/10000).toFixed(1)+'億';
-      else if(avgWan >= 1) priceLabel = avgWan.toFixed(0)+'萬';
+      let priceText = '';
+      if(avgPriceWan >= 10000) priceText = (avgPriceWan/10000).toFixed(1)+'億';
+      else if(avgPriceWan >= 1) priceText = avgPriceWan.toFixed(0)+'萬';
 
-      let innerColor = '#1a73e8';
-      if(avgUnitWan >= 70) innerColor = '#b71c1c';
-      else if(avgUnitWan >= 40) innerColor = '#e65100';
-      else if(avgUnitWan >= 20) innerColor = '#f57f17';
-      else if(avgUnitWan > 0) innerColor = '#1b5e20';
+      const outerColor = getColorForMode(markerSettings.outerMode, avgPriceWan, avgUnitWan);
+      const innerColor = getColorForMode(markerSettings.innerMode, avgPriceWan, avgUnitWan);
 
+      const line1 = priceText || totalCount+'筆';
+      const line2 = priceText ? totalCount+'筆' : '';
+
+      const svgHtml = makeMarkerSVG({sz, outerColor, innerColor, line1, line2});
       const labelHtml = commLabel
         ? `<div style="margin-top:-2px;padding:1px 4px;background:rgba(255,255,255,.92);border-radius:6px;font-size:8px;font-weight:600;color:#333;white-space:nowrap;max-width:70px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08);">${commLabel}</div>`
         : '';
 
-      const totalH = commLabel ? dim + 14 : dim;
+      const totalH = commLabel ? sz + 14 : sz;
       return L.divIcon({
-        html: `<div style="display:flex;flex-direction:column;align-items:center;">
-          <div style="display:flex;align-items:center;justify-content:center;width:${dim}px;height:${dim}px;background:${innerColor};border:3px solid #fff;border-radius:50%;color:#fff;font-weight:700;font-size:11px;text-shadow:0 1px 2px rgba(0,0,0,.3);box-shadow:0 2px 8px rgba(0,0,0,.25);line-height:1.2;cursor:pointer;">${totalCount}筆${priceLabel ? '<br><span style="font-size:9px">'+priceLabel+'</span>' : ''}</div>
-          ${labelHtml}</div>`,
+        html: `<div style="display:flex;flex-direction:column;align-items:center;">${svgHtml}${labelHtml}</div>`,
         className: 'price-marker',
-        iconSize: [dim + 8, totalH],
-        iconAnchor: [(dim+8)/2, totalH/2]
+        iconSize: [sz + 8, totalH],
+        iconAnchor: [(sz+8)/2, totalH/2]
       });
     }
   });
@@ -588,6 +676,29 @@ function clearFilters(){
   ['fBuildType','fRooms','fPing','fRatio','fUnitPrice','fPrice','fYear']
     .forEach(id=>{const el=document.getElementById(id); if(el) el.value='';});
   const cb = document.getElementById('fExcludeSpecial'); if(cb) cb.checked=false;
+  document.querySelectorAll('.quick-filters button').forEach(b=>b.classList.remove('active'));
+}
+
+function quickFilter(mode){
+  const nowYear = new Date().getFullYear() - 1911;
+  if(mode === '1yr'){
+    document.getElementById('fYear').value = `${nowYear-1}-${nowYear}`;
+    document.getElementById('qf1yr').classList.add('active');
+    document.getElementById('qf2yr').classList.remove('active');
+  } else if(mode === '2yr'){
+    document.getElementById('fYear').value = `${nowYear-2}-${nowYear}`;
+    document.getElementById('qf2yr').classList.add('active');
+    document.getElementById('qf1yr').classList.remove('active');
+  } else if(mode === 'nospecial'){
+    const cb = document.getElementById('fExcludeSpecial');
+    cb.checked = !cb.checked;
+    document.getElementById('qfNoSpec').classList.toggle('active', cb.checked);
+  } else if(mode === 'clear'){
+    clearFilters();
+    if(txData.length > 0) rerunSearch();
+    return;
+  }
+  if(txData.length > 0) rerunSearch();
 }
 
 function getFilterParams(){
@@ -1074,6 +1185,23 @@ function buildGroups(){
 
   if(merged.length !== arr.length)
     console.log(`📍 群組合併: ${arr.length} → ${merged.length}（${arr.length - merged.length} 個重疊群組被合併）`);
+
+  // ── Phase 5: 近兩年分析（排除特殊交易）──
+  const nowYear = new Date().getFullYear() - 1911;
+  const twoYearThreshold = (nowYear - 2) * 10000;
+  merged.forEach(g => {
+    const recent = g.items.filter(({tx}) => {
+      if(tx.is_special) return false;
+      const dr = parseInt(String(tx.date_raw||'0').replace(/\D/g,''),10);
+      return dr >= twoYearThreshold;
+    });
+    const rPrices = recent.map(({tx})=>tx.price).filter(v=>v>0);
+    const rUnits = recent.map(({tx})=>tx.unit_price_ping).filter(v=>v>0);
+    g.recentCount = recent.length;
+    g.recentAvgPrice = rPrices.length ? rPrices.reduce((a,b)=>a+b,0)/rPrices.length : 0;
+    g.recentAvgUnitPrice = rUnits.length ? rUnits.reduce((a,b)=>a+b,0)/rUnits.length : 0;
+  });
+
   return merged;
 }
 
@@ -1085,6 +1213,37 @@ function getUnitPriceColor(wan){
   return '#1b5e20';
 }
 
+function getTotalPriceColor(wan){
+  if(wan <= 0) return '#888';
+  if(wan >= 3000) return '#b71c1c';
+  if(wan >= 1500) return '#e65100';
+  if(wan >= 500) return '#f57f17';
+  return '#1b5e20';
+}
+
+function getColorForMode(mode, avgPriceWan, avgUnitWan){
+  if(mode === 'total_price') return getTotalPriceColor(avgPriceWan);
+  return getUnitPriceColor(avgUnitWan);
+}
+
+function makeMarkerSVG({sz, outerColor, innerColor, line1, line2, fontSz1, fontSz2}){
+  const cx = sz/2, cy = sz/2;
+  const outerR = sz/2 - 1;
+  const ringW = Math.max(4, Math.floor(sz * 0.1));
+  const innerR = outerR - ringW - 1.5;
+  const hasTwo = line1 && line2;
+  const y1 = hasTwo ? cy - 4 : cy;
+  const y2 = cy + 7;
+  const fs1 = fontSz1 || (sz >= 54 ? 11 : 10);
+  const fs2 = fontSz2 || (sz >= 54 ? 9 : 8);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}">
+    <circle cx="${cx}" cy="${cy}" r="${outerR}" fill="${outerColor}" stroke="rgba(255,255,255,.9)" stroke-width="2"/>
+    <circle cx="${cx}" cy="${cy}" r="${innerR}" fill="${innerColor}" stroke="rgba(255,255,255,.5)" stroke-width="1.5"/>
+    ${line1?`<text x="${cx}" y="${y1}" text-anchor="middle" dominant-baseline="central" fill="#fff" font-size="${fs1}" font-weight="700" font-family="Arial,sans-serif" style="paint-order:stroke" stroke="rgba(0,0,0,.25)" stroke-width=".8">${line1}</text>`:''}
+    ${line2?`<text x="${cx}" y="${y2}" text-anchor="middle" dominant-baseline="central" fill="rgba(255,255,255,.95)" font-size="${fs2}" font-weight="600" font-family="Arial,sans-serif" style="paint-order:stroke" stroke="rgba(0,0,0,.2)" stroke-width=".6">${line2}</text>`:''}
+  </svg>`;
+}
+
 function plotMarkers(fitBounds = true){
   markerClusterGroup.clearLayers();
   const boundsArr = [];
@@ -1092,50 +1251,67 @@ function plotMarkers(fitBounds = true){
 
   groups.forEach(g => {
     const n = g.items.length;
-    // 群組中心: 中位數座標（比平均不受極端值影響）
     const sortedLats = g.lats.slice().sort((a,b)=>a-b);
     const sortedLngs = g.lngs.slice().sort((a,b)=>a-b);
     const mid = Math.floor(sortedLats.length / 2);
     const lat = sortedLats[mid];
     const lng = sortedLngs[mid];
 
-    const avgPrice = g.prices.length ? g.prices.reduce((a,b)=>a+b,0)/g.prices.length : 0;
-    const avgUnitPrice = g.unitPrices.length ? g.unitPrices.reduce((a,b)=>a+b,0)/g.unitPrices.length : 0;
-    const avgUnitWan = avgUnitPrice / 10000;
-    const avgPriceWan = avgPrice / 10000;
+    // 選擇資料來源：近兩年 or 全部
+    const useRecent = markerSettings.contentMode === 'recent2yr' && g.recentCount > 0;
+    const avgPrice = useRecent ? g.recentAvgPrice : (g.prices.length ? g.prices.reduce((a,b)=>a+b,0)/g.prices.length : 0);
+    const avgUnitPrice = useRecent ? g.recentAvgUnitPrice : (g.unitPrices.length ? g.unitPrices.reduce((a,b)=>a+b,0)/g.unitPrices.length : 0);
+    const displayCount = useRecent ? g.recentCount : n;
 
-    const innerColor = getUnitPriceColor(avgUnitWan);
+    const avgPriceWan = avgPrice / 10000;
+    const avgUnitWan = avgUnitPrice / 10000;
+
+    const outerColor = getColorForMode(markerSettings.outerMode, avgPriceWan, avgUnitWan);
+    const innerColor = getColorForMode(markerSettings.innerMode, avgPriceWan, avgUnitWan);
     const label = g.label ? g.label.substring(0, 8) : '';
 
+    // 價格文字
+    let priceText = '';
+    if(avgPriceWan >= 10000) priceText = (avgPriceWan/10000).toFixed(1)+'億';
+    else if(avgPriceWan >= 1) priceText = Math.round(avgPriceWan)+'萬';
+    else priceText = '-';
+
+    // 尺寸
+    let sz = n >= 20 ? 56 : (n >= 5 ? 50 : 44);
+    if(n === 1) sz = 42;
+
+    // 行文字：價錢在上面，筆數在下面
+    let line1, line2;
     if(n === 1){
-      // ─── 單筆：直接顯示價格 ───
+      line1 = priceText;
+      line2 = '';
+    } else {
+      line1 = priceText;
+      line2 = displayCount + '筆';
+    }
+
+    const svgHtml = makeMarkerSVG({sz, outerColor, innerColor, line1, line2});
+    const labelHtml = label
+      ? `<div style="margin-top:-2px;padding:1px 5px;background:rgba(255,255,255,.95);border-radius:6px;font-size:${n>1?9:8}px;font-weight:700;color:#333;white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08);">${escHtml(label)}</div>` : '';
+    const totalH = label ? sz + 15 : sz;
+
+    const icon = L.divIcon({
+      html: `<div style="display:flex;flex-direction:column;align-items:center;">${svgHtml}${labelHtml}</div>`,
+      iconSize: [sz+8, totalH],
+      iconAnchor: [(sz+8)/2, totalH/2],
+      className: 'price-marker'
+    });
+
+    const marker = L.marker([lat, lng], {icon});
+    marker._groupCount = n;
+    marker._avgPrice = avgPrice;
+    marker._avgUnitPrice = avgUnitPrice;
+    marker._groupLabel = g.label;
+    marker._groupItems = g.items;
+
+    if(n === 1){
       const tx = g.items[0].tx;
       const origIdx = g.items[0].origIdx;
-      const priceWan = (tx.price||0)/10000;
-      let priceText;
-      if(priceWan >= 10000) priceText = (priceWan/10000).toFixed(1)+'億';
-      else if(priceWan >= 1) priceText = priceWan.toFixed(0)+'萬';
-      else priceText = '-';
-
-      const unitColor = getUnitPriceColor((tx.unit_price_ping||0)/10000);
-      const sz = 40;
-      const labelHtml = label
-        ? `<div style="margin-top:-2px;padding:1px 4px;background:rgba(255,255,255,.92);border-radius:6px;font-size:8px;font-weight:600;color:#333;white-space:nowrap;max-width:65px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08);">${escHtml(label)}</div>` : '';
-      const totalH = label ? sz + 14 : sz;
-
-      const marker = L.marker([lat, lng], {
-        icon: L.divIcon({
-          html: `<div style="display:flex;flex-direction:column;align-items:center;">
-            <div style="display:flex;align-items:center;justify-content:center;width:${sz}px;height:${sz}px;background:${unitColor};border:3px solid #fff;border-radius:50%;font-size:10px;font-weight:bold;color:white;text-shadow:0 1px 2px rgba(0,0,0,.4);box-shadow:0 2px 6px rgba(0,0,0,.25);line-height:1.1;">${priceText}</div>
-            ${labelHtml}</div>`,
-          iconSize: [sz+8, totalH], iconAnchor:[(sz+8)/2, totalH/2], className:'price-marker'
-        })
-      });
-      marker._groupCount = 1;
-      marker._avgPrice = tx.price;
-      marker._avgUnitPrice = tx.unit_price_ping;
-      marker._groupLabel = g.label;
-      marker._groupItems = g.items;
       marker.bindPopup(makePopup(tx), {maxWidth:320});
       marker.on('click', () => {
         activeCardIdx = origIdx;
@@ -1143,40 +1319,12 @@ function plotMarkers(fitBounds = true){
         const card = document.querySelector(`.tx-card[data-idx="${origIdx}"]`);
         if(card) card.scrollIntoView({behavior:'smooth', block:'center'});
       });
-      markerClusterGroup.addLayer(marker);
-      boundsArr.push([lat, lng]);
     } else {
-      // ─── 多筆：群組 marker ───
-      let priceText;
-      if(avgPriceWan >= 10000) priceText = (avgPriceWan/10000).toFixed(1)+'億';
-      else if(avgPriceWan >= 1) priceText = Math.round(avgPriceWan)+'萬';
-      else priceText = '';
-
-      const sz = n >= 20 ? 54 : (n >= 5 ? 48 : 42);
-      const labelHtml = label
-        ? `<div style="margin-top:-2px;padding:1px 5px;background:rgba(255,255,255,.95);border-radius:6px;font-size:9px;font-weight:700;color:#333;white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08);">${escHtml(label)}</div>` : '';
-      const totalH = label ? sz + 15 : sz;
-
-      const marker = L.marker([lat, lng], {
-        icon: L.divIcon({
-          html: `<div style="display:flex;flex-direction:column;align-items:center;">
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:${sz}px;height:${sz}px;background:${innerColor};border:3px solid #fff;border-radius:50%;color:#fff;font-weight:700;font-size:12px;text-shadow:0 1px 2px rgba(0,0,0,.3);box-shadow:0 2px 8px rgba(0,0,0,.25);line-height:1.15;cursor:pointer;">${n}筆${priceText ? '<br><span style="font-size:8px">均'+priceText+'</span>' : ''}</div>
-            ${labelHtml}</div>`,
-          iconSize: [sz+8, totalH], iconAnchor:[(sz+8)/2, totalH/2], className:'price-marker'
-        })
-      });
-      marker._groupCount = n;
-      marker._avgPrice = avgPrice;
-      marker._avgUnitPrice = avgUnitPrice;
-      marker._groupLabel = g.label;
-      marker._groupItems = g.items;
-      // 點擊群組 marker → 側欄列表
-      marker.on('click', () => {
-        showClusterList(g.items);
-      });
-      markerClusterGroup.addLayer(marker);
-      boundsArr.push([lat, lng]);
+      marker.on('click', () => showClusterList(g.items));
     }
+
+    markerClusterGroup.addLayer(marker);
+    boundsArr.push([lat, lng]);
   });
 
   if(fitBounds && boundsArr.length > 0){
@@ -1231,13 +1379,15 @@ function addLegend(){
   legend.onAdd = function(){
     const div = L.DomUtil.create('div','');
     div.innerHTML = `
-      <div style="background:#fff;padding:10px 12px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.15);font-size:11px;line-height:1.8;min-width:140px">
-        <div style="font-weight:700;margin-bottom:4px;font-size:12px">🎯 圓圈＝單價/坪</div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#1b5e20;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>＜20萬</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#f57f17;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>20~40萬</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#e65100;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>40~70萬</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#b71c1c;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>＞70萬</span></div>
-        <div style="font-weight:700;margin-top:6px;font-size:11px;color:#666">💡 同建案/同位置自動合併</div>
+      <div style="background:#fff;padding:10px 12px;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,.15);font-size:11px;line-height:1.8;min-width:170px">
+        <div style="font-weight:700;margin-bottom:4px;font-size:12px">🎯 雙圈色彩圖例</div>
+        <div style="font-weight:600;font-size:10px;color:#1a73e8;margin-bottom:2px">● 外環＝總價 ｜ ● 內圈＝單價/坪</div>
+        <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#1b5e20" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#1b5e20"/></svg><span>低（＜500萬/＜20萬）</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#f57f17" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#f57f17"/></svg><span>中（500-1500/20-40萬）</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#e65100" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#e65100"/></svg><span>中高（1500-3000/40-70萬）</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#b71c1c" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#b71c1c"/></svg><span>高（＞3000萬/＞70萬）</span></div>
+        <div style="font-weight:600;margin-top:6px;font-size:10px;color:#555">📊 圈內＝近2年均價(排除特殊)</div>
+        <div style="font-size:10px;color:#999">⚙️ 點右上角設定可自訂顏色</div>
       </div>`;
     L.DomEvent.disableScrollPropagation(div);
     L.DomEvent.disableClickPropagation(div);
@@ -1361,10 +1511,49 @@ function showClusterList(items){
 }
 
 // ═══════════════════════════════════════════════════════════════
+// 設定面板
+// ═══════════════════════════════════════════════════════════════
+function toggleSettings(){
+  const panel = document.getElementById('settingsPanel');
+  const overlay = document.getElementById('settingsOverlay');
+  const isOpen = panel.classList.contains('open');
+  panel.classList.toggle('open', !isOpen);
+  overlay.classList.toggle('show', !isOpen);
+}
+
+function applySettings(){
+  markerSettings.outerMode = document.getElementById('sOuter').value;
+  markerSettings.innerMode = document.getElementById('sInner').value;
+  markerSettings.contentMode = document.getElementById('sContent').value;
+  try{ localStorage.setItem('markerSettings', JSON.stringify(markerSettings)); }catch(e){}
+  if(txData.length > 0) plotMarkers(false);
+}
+
+function loadSettings(){
+  try{
+    const saved = localStorage.getItem('markerSettings');
+    if(saved){
+      const s = JSON.parse(saved);
+      markerSettings = {...markerSettings, ...s};
+    }
+    document.getElementById('sOuter').value = markerSettings.outerMode;
+    document.getElementById('sInner').value = markerSettings.innerMode;
+    document.getElementById('sContent').value = markerSettings.contentMode;
+  }catch(e){}
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 初始化
 // ═══════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
+  loadSettings();
   initMap();
+  // 手機：點擊地圖時自動收合側欄
+  if(window.innerWidth <= 768){
+    map.on('click', () => {
+      document.getElementById('sidebar').classList.remove('open');
+    });
+  }
 });
 </script>
 </body>
