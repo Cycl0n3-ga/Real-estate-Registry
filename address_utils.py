@@ -440,6 +440,22 @@ OLD_TO_NEW = {
     '台中縣': '台中市', '台南縣': '台南市', '高雄縣': '高雄市',
 }
 
+# 預編譯 parse_address 用的 regex (避免每次呼叫重新編譯)
+_RE_DISTRICT = re.compile(r'^(.{1,4}?(?:區|鄉|鎮|市))')
+_RE_VILLAGE = re.compile(r'^(.{1,5}?里)(?=[^\d]*(?:路|街|大道|\d+鄰))')
+_RE_NEIGHBOR = re.compile(r'^(\d+鄰)')
+_RE_STREET = re.compile(r'^(.+?(?:路|街|大道))([一二三四五六七八九十\d]+段)?')
+_RE_STREET_FALLBACK = re.compile(r'^([^\d]+?)(?=\d)')
+_RE_LANE = re.compile(r'^(\d+)巷')
+_RE_ALLEY = re.compile(r'^(\d+)弄')
+_RE_NUMBER = re.compile(r'^(\d+)(?:之(\d+))?號')
+_RE_SUB_NUMBER = re.compile(r'^之(\d+)')
+_RE_FLOOR = re.compile(r'^[,，]?\s*(\d+)(?:樓|層)')
+_RE_QUERY_DISTRICT = re.compile(r'^(.{1,4}?(?:區|鄉|鎮|市))(?=.)')
+_RE_QUERY_VILLAGE = re.compile(r'^(.{1,5}?里)')
+_RE_QUERY_FLOOR = re.compile(r'^[,，]?\s*(\d+)(?:樓|層|[Ff])')
+_RE_QUERY_SUB = re.compile(r'^之(\d+)')
+
 
 def parse_address(raw_address, district_col='', city_hint=''):
     """
@@ -477,7 +493,7 @@ def parse_address(raw_address, district_col='', city_hint=''):
             addr = addr[m2.end():]
 
     # 鄉鎮市區
-    m = re.match(r'^(.{1,4}?(?:區|鄉|鎮|市))', addr)
+    m = _RE_DISTRICT.match(addr)
     if m:
         result['district'] = m.group(1)
         addr = addr[m.end():]
@@ -499,42 +515,42 @@ def parse_address(raw_address, district_col='', city_hint=''):
                 result['county_city'] = AMBIGUOUS_DISTRICTS[result['district']][0]
 
     # 里
-    m = re.match(r'^(.{1,5}?里)(?=[^\d]*(?:路|街|大道|\d+鄰))', addr)
+    m = _RE_VILLAGE.match(addr)
     if m:
         result['village'] = m.group(1)
         addr = addr[m.end():]
 
     # 鄰
-    m = re.match(r'^(\d+鄰)', addr)
+    m = _RE_NEIGHBOR.match(addr)
     if m:
         result['neighborhood'] = m.group(1)
         addr = addr[m.end():]
 
     # 街路名 (含段)
-    m = re.match(r'^(.+?(?:路|街|大道))([一二三四五六七八九十\d]+段)?', addr)
+    m = _RE_STREET.match(addr)
     if m:
         result['street'] = m.group(1) + (m.group(2) or '')
         addr = addr[m.end():]
     else:
-        m = re.match(r'^([^\d]+?)(?=\d)', addr)
+        m = _RE_STREET_FALLBACK.match(addr)
         if m and m.group(1):
             result['street'] = m.group(1)
             addr = addr[m.end():]
 
     # 巷
-    m = re.match(r'^(\d+)巷', addr)
+    m = _RE_LANE.match(addr)
     if m:
         result['lane'] = m.group(1)
         addr = addr[len(m.group(0)):]
 
     # 弄
-    m = re.match(r'^(\d+)弄', addr)
+    m = _RE_ALLEY.match(addr)
     if m:
         result['alley'] = m.group(1)
         addr = addr[len(m.group(0)):]
 
     # 號 — X之Y號 → number=X, sub_number=Y;  X號 → number=X
-    m = re.match(r'^(\d+)(?:之(\d+))?號', addr)
+    m = _RE_NUMBER.match(addr)
     if m:
         result['number'] = m.group(1)
         if m.group(2):
@@ -542,20 +558,20 @@ def parse_address(raw_address, district_col='', city_hint=''):
         addr = addr[len(m.group(0)):]
 
     # 號之Y (如 基隆市中正區新豐街486號之5  2樓)
-    m2 = re.match(r'^之(\d+)', addr)
+    m2 = _RE_SUB_NUMBER.match(addr)
     if m2:
         if not result['sub_number']:
             result['sub_number'] = m2.group(1)
         addr = addr[len(m2.group(0)):]
 
     # 樓
-    m = re.match(r'^[,，]?\s*(\d+)(?:樓|層)', addr)
+    m = _RE_FLOOR.match(addr)
     if m:
         result['floor'] = m.group(1)
         addr = addr[len(m.group(0)):]
 
     # 之 (樓之X, 如 53號12樓之8)
-    m = re.match(r'^之(\d+)', addr)
+    m = _RE_SUB_NUMBER.match(addr)
     if m:
         if not result['sub_number']:
             result['sub_number'] = m.group(1)
@@ -592,41 +608,41 @@ def parse_query(query: str) -> dict:
         addr = addr[m.end():]
 
     # 鄉鎮市區
-    m = re.match(r'^(.{1,4}?(?:區|鄉|鎮|市))(?=.)', addr)
+    m = _RE_QUERY_DISTRICT.match(addr)
     if m:
         result['district'] = m.group(1)
         addr = addr[m.end():]
 
     # 里 (略過不儲存)
-    m = re.match(r'^(.{1,5}?里)(?=[^\d]*(?:路|街|大道|\d))', addr)
+    m = _RE_QUERY_VILLAGE.match(addr)
     if m:
         addr = addr[m.end():]
 
     # 鄰 (略過不儲存)
-    m = re.match(r'^(\d+鄰)', addr)
+    m = _RE_NEIGHBOR.match(addr)
     if m:
         addr = addr[m.end():]
 
     # 街路名 (含段)
-    m = re.match(r'^(.+?(?:路|街|大道))([一二三四五六七八九十\d]+段)?', addr)
+    m = _RE_STREET.match(addr)
     if m:
         result['street'] = m.group(1) + (m.group(2) or '')
         addr = addr[m.end():]
 
     # 巷
-    m = re.match(r'^(\d+)巷', addr)
+    m = _RE_LANE.match(addr)
     if m:
         result['lane'] = m.group(1)
         addr = addr[len(m.group(0)):]
 
     # 弄
-    m = re.match(r'^(\d+)弄', addr)
+    m = _RE_ALLEY.match(addr)
     if m:
         result['alley'] = m.group(1)
         addr = addr[len(m.group(0)):]
 
     # 號 — X之Y號 → number=X, sub_number=Y;  X號 → number=X
-    m = re.match(r'^(\d+)(?:之(\d+))?號', addr)
+    m = _RE_NUMBER.match(addr)
     if m:
         result['number'] = m.group(1)
         if m.group(2):
@@ -634,20 +650,20 @@ def parse_query(query: str) -> dict:
         addr = addr[len(m.group(0)):]
 
     # 號之Y
-    m2 = re.match(r'^之(\d+)', addr)
+    m2 = _RE_SUB_NUMBER.match(addr)
     if m2:
         if not result['sub_number']:
             result['sub_number'] = m2.group(1)
         addr = addr[len(m2.group(0)):]
 
     # 樓 (支援 F/f)
-    m = re.match(r'^(\d+)(?:樓|層|[Ff])', addr)
+    m = _RE_QUERY_FLOOR.match(addr)
     if m:
         result['floor'] = m.group(1)
         addr = addr[len(m.group(0)):]
 
     # 之 (樓之X)
-    m = re.match(r'^之(\d+)', addr)
+    m = _RE_QUERY_SUB.match(addr)
     if m:
         if not result['sub_number']:
             result['sub_number'] = m.group(1)

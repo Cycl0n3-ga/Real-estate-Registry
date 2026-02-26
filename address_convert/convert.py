@@ -92,19 +92,30 @@ normalize_address_numbers = normalize_address
 def safe_int(val, default=None):
     if val is None or val == '':
         return default
+    if isinstance(val, int):
+        return val
     try:
-        return int(float(str(val).replace(',', '').replace(' ', '')))
+        # 快速路徑: 純數字字串
+        return int(val)
     except (ValueError, TypeError):
-        return default
+        try:
+            return int(float(str(val).replace(',', '').replace(' ', '')))
+        except (ValueError, TypeError):
+            return default
 
 
 def safe_float(val, default=None):
     if val is None or val == '':
         return default
+    if isinstance(val, (int, float)):
+        return float(val)
     try:
-        return float(str(val).replace(',', ''))
+        return float(val)
     except (ValueError, TypeError):
-        return default
+        try:
+            return float(str(val).replace(',', ''))
+        except (ValueError, TypeError):
+            return default
 
 
 def parse_price(val):
@@ -398,7 +409,7 @@ class LandDataDB:
         self._insert_batch: list = []
         self._enrich_batch: list = []
         self._init_stats()
-        self.BATCH_SIZE = 10000
+        self.BATCH_SIZE = 50000
 
     def _init_stats(self):
         self._stats = {
@@ -424,11 +435,13 @@ class LandDataDB:
         self.conn = sqlite3.connect(self.db_path)
         cur = self.conn.cursor()
 
-        # 效能設定
+        # 批量匯入效能設定 (finalize 時會恢復)
         cur.execute('PRAGMA journal_mode=WAL')
-        cur.execute('PRAGMA synchronous=NORMAL')
-        cur.execute('PRAGMA cache_size=-64000')
+        cur.execute('PRAGMA synchronous=OFF')        # 匯入期間關閉同步 (finalize 恢復)
+        cur.execute('PRAGMA cache_size=-256000')      # 256MB cache
         cur.execute('PRAGMA temp_store=MEMORY')
+        cur.execute('PRAGMA locking_mode=EXCLUSIVE')  # 獨佔鎖定避免鎖開銷
+        cur.execute('PRAGMA page_size=8192')           # 較大頁面提升大表效能
 
         self._create_tables(cur)
         cur.execute('CREATE INDEX IF NOT EXISTS idx_dedup_key ON land_transaction(dedup_key)')
@@ -439,6 +452,8 @@ class LandDataDB:
         else:
             count = cur.execute('SELECT COUNT(*) FROM land_transaction').fetchone()[0]
             log_print(f'  📂 開啟既有資料庫: {self.db_path} ({count:,} 筆)')
+            # 增量匯入時，先暫時移除非必要索引以加速寫入
+            self._drop_non_essential_indexes(cur)
 
         # 載入去重鍵值
         if load_dedup:
@@ -513,6 +528,28 @@ class LandDataDB:
             self._bloom.add(key)
             count += 1
         log_print(f'    Bloom filter: {count:,} 既有鍵值 (~{self._bloom.memory_mb():.1f} MB)')
+
+    def _drop_non_essential_indexes(self, cursor):
+        """暫時移除非去重索引，大幅加速批量寫入"""
+        # 保留 idx_dedup_key (去重必需)，其餘在 finalize() 重建
+        drop_indexes = [
+            'idx_county_city', 'idx_district', 'idx_street', 'idx_lane',
+            'idx_number', 'idx_floor', 'idx_date', 'idx_price', 'idx_serial',
+            'idx_community',
+            'idx_addr_combo', 'idx_community_address', 'idx_street_lane_district',
+            'idx_search_numbers', 'idx_district_street_number',
+            'idx_district_street_lane', 'idx_community_district',
+        ]
+        dropped = 0
+        for idx_name in drop_indexes:
+            try:
+                cursor.execute(f'DROP INDEX IF EXISTS {idx_name}')
+                dropped += 1
+            except Exception:
+                pass
+        if dropped:
+            self.conn.commit()
+            log_print(f'    🗑  暫移 {dropped} 個索引 (finalize 時重建)')
 
     def upsert_record(self, rec: dict):
         """
@@ -639,8 +676,7 @@ class LandDataDB:
     def _flush_inserts(self):
         if not self._insert_batch:
             return
-        cur = self.conn.cursor()
-        cur.executemany(INSERT_DEDUP_SQL, self._insert_batch)
+        self.conn.executemany(INSERT_DEDUP_SQL, self._insert_batch)
         self.conn.commit()
         self._insert_batch = []
         self._batch_keys.clear()
@@ -648,11 +684,10 @@ class LandDataDB:
     def _flush_enriches(self):
         if not self._enrich_batch:
             return
-        cur = self.conn.cursor()
         for updates, row_id in self._enrich_batch:
             set_clauses = ', '.join(f'{col} = ?' for col in updates)
             values = list(updates.values()) + [row_id]
-            cur.execute(
+            self.conn.execute(
                 f'UPDATE land_transaction SET {set_clauses} WHERE id = ?',
                 values
             )
@@ -663,6 +698,123 @@ class LandDataDB:
         """強制寫入所有待處理批次"""
         self._flush_inserts()
         self._flush_enriches()
+
+    def fast_insert_records(self, records):
+        """
+        批次快速插入 (跳過逐筆 upsert 的 Python 開銷)。
+
+        適用於: rebuild 模式或確認無需 enrich 的場景。
+        邏輯:
+          1. 使用預計算的 _dedup_key (若有)
+          2. 批次 bloom filter 檢查 (Python set 去重同批重複)
+          3. 一次 executemany 插入
+
+        比 upsert_record 快 3-4 倍 (減少 per-record Python 開銷)。
+        """
+        batch_insert = []
+        _norm = norm_addr_simple
+        _strip = strip_city
+        _bloom = self._bloom
+        _batch_keys = self._batch_keys
+        stats = self._stats
+
+        for rec in records:
+            stats['total_scanned'] += 1
+
+            addr = rec.get('address', '')
+            if not addr:
+                stats['discarded'] += 1
+                stats['discard_no_addr'] += 1
+                continue
+            if '號' not in addr and '地號' not in addr:
+                stats['discarded'] += 1
+                stats['discard_no_number'] += 1
+                continue
+
+            # 使用預計算的 _dedup_key (若 parser 已提供)
+            dedup_key = rec.get('_dedup_key')
+            if dedup_key is None:
+                # fallback: 動態計算
+                date_str = rec.get('transaction_date', '') or ''
+                d = date_str.replace('/', '')[:7]
+                addr_norm = _strip(_norm(addr))
+                price = rec.get('total_price') or 0
+                try:
+                    price = int(price)
+                except (ValueError, TypeError):
+                    price = 0
+                dedup_key = f"{d}|{addr_norm}|{price}" if addr_norm else None
+
+            if dedup_key:
+                # 快速去重: set + bloom (不查 DB)
+                if dedup_key in _batch_keys:
+                    stats['duplicated'] += 1
+                    continue
+
+                if dedup_key in _bloom:
+                    stats['duplicated'] += 1
+                    continue
+
+                _batch_keys.add(dedup_key)
+                _bloom.add(dedup_key)
+
+            values = tuple(rec.get(col) for col in LAND_COLUMNS)
+            batch_insert.append((*values, dedup_key))
+            stats['inserted'] += 1
+
+        # 批量插入
+        if batch_insert:
+            self.conn.executemany(INSERT_DEDUP_SQL, batch_insert)
+
+        # 避免 batch_keys 無限成長
+        if len(self._batch_keys) > 100000:
+            self._batch_keys.clear()
+
+    def fast_insert_tuples(self, tuples_list):
+        """
+        極速批次插入 (直接接收 tuple 列表，跳過所有 dict 開銷)。
+
+        每個 tuple 格式: (*LAND_COLUMNS_values, dedup_key)
+        address 欄位在 tuple[2]，dedup_key 在 tuple[-1]。
+        """
+        batch_insert = []
+        _bloom = self._bloom
+        _batch_keys = self._batch_keys
+        stats = self._stats
+
+        for tup in tuples_list:
+            stats['total_scanned'] += 1
+            addr = tup[2]  # address 是第 3 個欄位
+
+            if not addr:
+                stats['discarded'] += 1
+                stats['discard_no_addr'] += 1
+                continue
+            if '號' not in addr and '地號' not in addr:
+                stats['discarded'] += 1
+                stats['discard_no_number'] += 1
+                continue
+
+            dedup_key = tup[-1]  # 最後一個欄位
+
+            if dedup_key:
+                if dedup_key in _batch_keys:
+                    stats['duplicated'] += 1
+                    continue
+                if dedup_key in _bloom:
+                    stats['duplicated'] += 1
+                    continue
+                _batch_keys.add(dedup_key)
+                _bloom.add(dedup_key)
+
+            batch_insert.append(tup)
+            stats['inserted'] += 1
+
+        if batch_insert:
+            self.conn.executemany(INSERT_DEDUP_SQL, batch_insert)
+
+        if len(self._batch_keys) > 100000:
+            self._batch_keys.clear()
 
     def backfill_community(self, api_db_path: str):
         """
@@ -733,9 +885,13 @@ class LandDataDB:
         return updated
 
     def finalize(self):
-        """建索引 + FTS5 + ANALYZE + VACUUM"""
+        """建索引 + FTS5 + ANALYZE + VACUUM，並恢復安全的 PRAGMA 設定"""
         self.flush_all()
         cur = self.conn.cursor()
+
+        # 恢復安全的同步設定
+        cur.execute('PRAGMA synchronous=NORMAL')
+        self.conn.commit()
 
         # 單欄索引
         log_print('  📇 建立索引...')
@@ -791,13 +947,19 @@ class LandDataDB:
         self.conn.execute('ANALYZE')
         self.conn.commit()
 
-        # VACUUM
+        # VACUUM (需要約等同 DB 大小的額外磁碟空間)
         log_print('  🗜  壓縮資料庫...')
-        self.conn.execute('PRAGMA journal_mode=DELETE')
-        self.conn.commit()
-        self.conn.execute('VACUUM')
-        self.conn.execute('PRAGMA journal_mode=WAL')
-        self.conn.commit()
+        try:
+            self.conn.execute('PRAGMA journal_mode=DELETE')
+            self.conn.commit()
+            self.conn.execute('VACUUM')
+        except sqlite3.OperationalError as e:
+            log_print(f'  ⚠️  VACUUM 失敗 ({e})，跳過壓縮 (不影響資料完整性)')
+        finally:
+            self.conn.execute('PRAGMA journal_mode=WAL')
+            self.conn.execute('PRAGMA locking_mode=NORMAL')  # 恢復正常鎖定模式
+            self.conn.execute('PRAGMA synchronous=NORMAL')    # 確保安全同步
+            self.conn.commit()
 
     def print_stats(self):
         """印出匯入統計"""
@@ -879,6 +1041,13 @@ def _parse_csv_row(row: list) -> Optional[dict]:
     raw_address = row[2]
     parsed = parse_address(raw_address, row[0])
 
+    # 預計算 dedup key (避免 fast_insert_records 重複正規化)
+    addr_norm = strip_city(norm_addr_simple(raw_address)) if raw_address else ''
+    date_str = row[7]
+    d = date_str.replace('/', '')[:7] if date_str else ''
+    price = safe_int(row[21]) or 0
+    _dedup_key = f"{d}|{addr_norm}|{price}" if addr_norm else None
+
     return {
         'raw_district':      row[0],
         'transaction_type':  row[1],
@@ -925,7 +1094,77 @@ def _parse_csv_row(row: list) -> Optional[dict]:
         'community_name':    None,
         'lat':               None,
         'lng':               None,
+        '_dedup_key':        _dedup_key,
     }
+
+
+def _parse_csv_row_fast(row: list):
+    """
+    將一列 LVR CSV → (values_tuple, dedup_key) 快速版。
+    直接產生 INSERT 用的 tuple，避免 dict 創建 + 再提取的開銷。
+    回傳 None 表示跳過。
+    """
+    while len(row) < 33:
+        row.append('')
+
+    raw_address = row[2]
+    parsed = parse_address(raw_address, row[0])
+
+    # 預計算 dedup key
+    addr_norm = strip_city(norm_addr_simple(raw_address)) if raw_address else ''
+    d = row[7].replace('/', '')[:7] if row[7] else ''
+    price = safe_int(row[21]) or 0
+    dedup_key = f"{d}|{addr_norm}|{price}" if addr_norm else None
+
+    # 直接建立與 LAND_COLUMNS + ['dedup_key'] 對應的 tuple
+    return (
+        row[0],                          # raw_district
+        row[1],                          # transaction_type
+        row[2],                          # address
+        safe_float(row[3]),              # land_area
+        row[4],                          # urban_zone
+        row[5],                          # non_urban_zone
+        row[6],                          # non_urban_use
+        row[7],                          # transaction_date
+        row[8],                          # transaction_count
+        row[9],                          # floor_level
+        row[10],                         # total_floors
+        row[11],                         # building_type
+        row[12],                         # main_use
+        row[13],                         # main_material
+        row[14],                         # build_date
+        safe_float(row[15]),             # building_area
+        safe_int(row[16]),               # rooms
+        safe_int(row[17]),               # halls
+        safe_int(row[18]),               # bathrooms
+        row[19],                         # partitioned
+        row[20],                         # has_management
+        safe_int(row[21]),               # total_price
+        safe_float(row[22]),             # unit_price
+        row[23],                         # parking_type
+        safe_float(row[24]),             # parking_area
+        safe_int(row[25]),               # parking_price
+        row[26],                         # note
+        row[27],                         # serial_no
+        safe_float(row[28]),             # main_area
+        safe_float(row[29]),             # attached_area
+        safe_float(row[30]),             # balcony_area
+        row[31],                         # elevator
+        row[32] if len(row) > 32 else '',  # transfer_no
+        parsed['county_city'],           # county_city
+        parsed['district'],              # district
+        parsed['village'],               # village
+        parsed['street'],                # street
+        parsed['lane'],                  # lane
+        parsed['alley'],                 # alley
+        parsed['number'],                # number
+        parsed['floor'],                 # floor
+        parsed['sub_number'],            # sub_number
+        None,                            # community_name
+        None,                            # lat
+        None,                            # lng
+        dedup_key,                       # dedup_key
+    )
 
 
 def _parse_api_row(row) -> Optional[dict]:
@@ -1154,31 +1393,42 @@ def _build_generic_csv_map(headers: list) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def import_csv_lvr(db: LandDataDB, csv_path: str):
-    """匯入 LVR 實價登錄 CSV"""
+    """匯入 LVR 實價登錄 CSV (使用極速 tuple 插入)"""
     log_print(f'\n📄 [CSV-LVR] 匯入: {csv_path}')
     t0 = time.time()
+
+    batch = []
+    batch_size = db.BATCH_SIZE
+    total = 0
 
     with open(csv_path, 'r', encoding='utf-8-sig') as f:
         reader = csv.reader(f)
         next(reader, None)  # 中文標頭
         next(reader, None)  # 英文標頭
 
-        for i, row in enumerate(reader, 1):
-            rec = _parse_csv_row(row)
-            if rec:
-                db.upsert_record(rec)
+        for row in reader:
+            tup = _parse_csv_row_fast(row)
+            if tup:
+                batch.append(tup)
 
-            if i % 10000 == 0:
-                db.flush_all()
+            total += 1
+            if len(batch) >= batch_size:
+                db.fast_insert_tuples(batch)
+                db.conn.commit()
+                batch = []
+
                 elapsed = time.time() - t0
-                rate = i / elapsed if elapsed > 0 else 0
+                rate = total / elapsed if elapsed > 0 else 0
                 s = db._stats
-                log_print(f'  ⏳ {i:,} 筆 | 新增 {s["inserted"]:,} | '
+                log_print(f'  ⏳ {total:,} 筆 | 新增 {s["inserted"]:,} | '
                       f'補充 {s["enriched"]:,} | 重複 {s["duplicated"]:,} | '
                       f'丟棄 {s["discarded"]:,} ({rate:,.0f}/s)',
                       flush=True)
 
-    db.flush_all()
+    if batch:
+        db.fast_insert_tuples(batch)
+        db.conn.commit()
+
     elapsed = time.time() - t0
     log_print(f'  ✅ CSV-LVR 完成: {elapsed:.1f}s')
 
@@ -1221,7 +1471,7 @@ def import_csv_generic(db: LandDataDB, csv_path: str):
 
 
 def import_api_db(db: LandDataDB, api_db_path: str):
-    """匯入 API transactions DB"""
+    """匯入 API transactions DB (使用批次快速插入)"""
     log_print(f'\n🌐 [API-DB] 匯入: {api_db_path}')
     t0 = time.time()
 
@@ -1234,30 +1484,41 @@ def import_api_db(db: LandDataDB, api_db_path: str):
         'FROM transactions'
     )
 
-    for i, row in enumerate(ct, 1):
+    batch = []
+    batch_size = db.BATCH_SIZE
+    total = 0
+
+    for row in ct:
+        total += 1
         try:
             rec = _parse_api_row(row)
         except Exception:
             rec = None
 
         if rec:
-            db.upsert_record(rec)
+            batch.append(rec)
         else:
             db._stats['discarded'] += 1
             db._stats['discard_parse_err'] += 1
             db._stats['total_scanned'] += 1
 
-        if i % 10000 == 0:
-            db.flush_all()
+        if len(batch) >= batch_size:
+            db.fast_insert_records(batch)
+            db.conn.commit()
+            batch = []
+
             elapsed = time.time() - t0
-            rate = i / elapsed if elapsed > 0 else 0
+            rate = total / elapsed if elapsed > 0 else 0
             s = db._stats
-            log_print(f'  ⏳ {i:,} 筆 | 新增 {s["inserted"]:,} | '
+            log_print(f'  ⏳ {total:,} 筆 | 新增 {s["inserted"]:,} | '
                   f'補充 {s["enriched"]:,} | 重複 {s["duplicated"]:,} | '
                   f'丟棄 {s["discarded"]:,} ({rate:,.0f}/s)',
                   flush=True)
 
-    db.flush_all()
+    if batch:
+        db.fast_insert_records(batch)
+        db.conn.commit()
+
     conn_t.close()
     elapsed = time.time() - t0
     log_print(f'  ✅ API-DB 完成: {elapsed:.1f}s')

@@ -172,7 +172,7 @@ land/
 | community2address 啟動 | 3.7s | 0.06s | **60x** |
 | community2address 查詢 | 100–230ms | ~25ms | **5–10x** |
 | address_match 結構化搜尋 | N/A (走 LIKE) | < 50ms | **索引直查** |
-| convert.py 資料轉換 | ~14,000/s | ~50,000+/s | **3.5x** |
+| convert.py 資料轉換 | ~14,000/s | ~22,000/s | **1.57x** |
 
 ### 自動優化
 
@@ -180,7 +180,7 @@ land/
 - 建立所有索引（18 個）
 - 建立 FTS5 全文檢索
 - 執行 ANALYZE 更新查詢規劃器統計
-- 執行 VACUUM 壓縮資料庫
+- 執行 VACUUM 壓縮資料庫（磁碟空間不足時自動跳過）
 
 轉換時使用 PRAGMA 優化批量寫入：
 - `journal_mode=WAL` — 寫前日誌，允許讀寫併發
