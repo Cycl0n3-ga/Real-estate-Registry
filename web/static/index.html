@@ -989,11 +989,15 @@ function stripCityJS(addr){
 }
 
 /**
- * 將 txData 分組：社區 > 同棟地址 > 座標接近
- * 回傳: [{label, items:[{tx, origIdx}], lat, lng, avgPrice, avgUnitPrice}, ...]
+ * 將 txData 分組：
+ *   Phase 1 — 按社區名或同棟地址分組
+ *   Phase 2 — 計算各組中心座標（中位數）
+ *   Phase 3 — 近距離合併（≈28m Union-Find），解決不同社區/地址在同座標重疊
+ * 回傳: [{label, items:[{tx, origIdx}], lats, lngs, prices, unitPrices}, ...]
  */
 function buildGroups(){
-  const groups = {};
+  // ── Phase 1: 按社區名/地址文字分組 ──
+  const raw = {};
   txData.forEach((tx, idx) => {
     if(!tx.lat || !tx.lng) return;
     let key;
@@ -1002,21 +1006,75 @@ function buildGroups(){
     } else {
       key = 'a:' + baseAddress(tx.address_raw || tx.address);
     }
-    if(!groups[key]){
-      groups[key] = {
+    if(!raw[key]){
+      raw[key] = {
         label: tx.community_name || stripCityJS(baseAddress(tx.address)),
         items: [], lats: [], lngs: [],
         prices: [], unitPrices: [],
       };
     }
-    const g = groups[key];
+    const g = raw[key];
     g.items.push({tx, origIdx: idx});
     g.lats.push(tx.lat);
     g.lngs.push(tx.lng);
     if(tx.price > 0) g.prices.push(tx.price);
     if(tx.unit_price_ping > 0) g.unitPrices.push(tx.unit_price_ping);
   });
-  return Object.values(groups);
+
+  // ── Phase 2: 各組中心（中位數）──
+  const arr = Object.values(raw);
+  const len = arr.length;
+  arr.forEach(g => {
+    const sLat = g.lats.slice().sort((a,b)=>a-b);
+    const sLng = g.lngs.slice().sort((a,b)=>a-b);
+    const m = Math.floor(sLat.length / 2);
+    g._cLat = sLat[m];
+    g._cLng = sLng[m];
+  });
+
+  // ── Phase 3: Union-Find 近距離合併（≈28m 內視為同位置）──
+  //    0.00025° ≈ 28m(lat) / 25m(lng) @ 25°N
+  const MERGE = 0.00025;
+  const par = Array.from({length: len}, (_, i) => i);
+  function find(x){ while(par[x]!==x){ par[x]=par[par[x]]; x=par[x]; } return x; }
+  for(let i = 0; i < len; i++)
+    for(let j = i+1; j < len; j++)
+      if(Math.abs(arr[i]._cLat - arr[j]._cLat) < MERGE &&
+         Math.abs(arr[i]._cLng - arr[j]._cLng) < MERGE)
+        par[find(i)] = find(j);
+
+  // 收集合併結果
+  const buckets = {};
+  for(let i = 0; i < len; i++){
+    const r = find(i);
+    if(!buckets[r]) buckets[r] = [];
+    buckets[r].push(arr[i]);
+  }
+
+  // ── Phase 4: 生成最終群組 ──
+  const merged = Object.values(buckets).map(gs => {
+    if(gs.length === 1) return gs[0];
+    // 合併多個重疊群組
+    const m = { items:[], lats:[], lngs:[], prices:[], unitPrices:[] };
+    const lbls = [];
+    gs.forEach(g => {
+      m.items.push(...g.items);
+      m.lats.push(...g.lats);
+      m.lngs.push(...g.lngs);
+      m.prices.push(...g.prices);
+      m.unitPrices.push(...g.unitPrices);
+      if(g.label) lbls.push(g.label);
+    });
+    const ul = [...new Set(lbls)];
+    if(ul.length <= 1) m.label = ul[0] || '';
+    else if(ul.length === 2) m.label = ul.join('·');
+    else m.label = ul[0] + '等' + ul.length + '案';
+    return m;
+  });
+
+  if(merged.length !== arr.length)
+    console.log(`📍 群組合併: ${arr.length} → ${merged.length}（${arr.length - merged.length} 個重疊群組被合併）`);
+  return merged;
 }
 
 function getUnitPriceColor(wan){
@@ -1179,7 +1237,7 @@ function addLegend(){
         <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#f57f17;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>20~40萬</span></div>
         <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#e65100;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>40~70萬</span></div>
         <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#b71c1c;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>＞70萬</span></div>
-        <div style="font-weight:700;margin-top:6px;font-size:11px;color:#666">💡 同建案/地址自動合併</div>
+        <div style="font-weight:700;margin-top:6px;font-size:11px;color:#666">💡 同建案/同位置自動合併</div>
       </div>`;
     L.DomEvent.disableScrollPropagation(div);
     L.DomEvent.disableClickPropagation(div);
