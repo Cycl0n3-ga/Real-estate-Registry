@@ -24,328 +24,49 @@ import re
 import sqlite3
 import sys
 import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from collections import defaultdict
 
 # ========== 路徑設定 ==========
 SCRIPT_DIR = Path(__file__).parent
-DB_PATH = SCRIPT_DIR.parent / "db" / "land_data.db"
+LAND_DIR = SCRIPT_DIR.parent
+DB_PATH = LAND_DIR / "db" / "land_data.db"
 
-# ========== 全形半形轉換 ==========
-FULLWIDTH_DIGITS = "０１２３４５６７８９"
-HALFWIDTH_DIGITS = "0123456789"
-FW_TO_HW = str.maketrans(FULLWIDTH_DIGITS, HALFWIDTH_DIGITS)
-HW_TO_FW = str.maketrans(HALFWIDTH_DIGITS, FULLWIDTH_DIGITS)
+# 共用模組
+sys.path.insert(0, str(LAND_DIR))
+from address_utils import (
+    fullwidth_to_halfwidth, halfwidth_to_fullwidth,
+    normalize_city_name,
+    extract_city, extract_district_name, infer_city,
+    strip_to_road_number, strip_city_district,
+    extract_road, extract_road_alley, extract_road_number,
+    extract_house_number, normalize_community_name,
+    get_591_regionids,
+    DISTRICT_CITY_MAP, CITIES, CITY_TO_591_REGION,
+    parse_address,
+)
+from api591 import Api591Client
 
-
-def fullwidth_to_halfwidth(s: str) -> str:
-    return s.translate(FW_TO_HW)
-
-
-def halfwidth_to_fullwidth(s: str) -> str:
-    return s.translate(HW_TO_FW)
-
-
-# ========== 城市代碼對照 ==========
-# land_data.db 的 county_city 欄位值（使用台，非臺）
-CITY_NORMALIZE = {
-    "台北市": "台北市", "臺北市": "台北市",
-    "台中市": "台中市", "臺中市": "台中市",
-    "台南市": "台南市", "臺南市": "台南市",
-    "台東縣": "台東縣", "臺東縣": "台東縣",
-    "新北市": "新北市", "桃園市": "桃園市", "高雄市": "高雄市",
-    "基隆市": "基隆市", "新竹市": "新竹市", "新竹縣": "新竹縣",
-    "苗栗縣": "苗栗縣", "彰化縣": "彰化縣", "南投縣": "南投縣",
-    "雲林縣": "雲林縣", "嘉義市": "嘉義市", "嘉義縣": "嘉義縣",
-    "屏東縣": "屏東縣", "宜蘭縣": "宜蘭縣", "花蓮縣": "花蓮縣",
-    "澎湖縣": "澎湖縣", "金門縣": "金門縣", "連江縣": "連江縣",
-}
-
-def normalize_city_name(city: str) -> str:
-    """將縣市名正規化為 land_data.db 的格式（台/臺統一用台）"""
-    if city in CITY_NORMALIZE:
-        return CITY_NORMALIZE[city]
-    return city
-
-
-# ========== 縣市列表 ==========
-CITIES = [
-    "臺北市", "台北市", "新北市", "桃園市", "桃園縣",
-    "臺中市", "台中市", "臺南市", "台南市", "高雄市",
-    "基隆市", "新竹市", "新竹縣", "苗栗縣", "彰化縣",
-    "南投縣", "雲林縣", "嘉義市", "嘉義縣", "屏東縣",
-    "宜蘭縣", "花蓮縣", "臺東縣", "台東縣", "澎湖縣",
-    "金門縣", "連江縣",
-]
-
-# 591 API 的 regionid 對照
-CITY_TO_591_REGION = {
-    "臺北市": 1,  "新北市": 3,  "基隆市": 2,
-    "新竹市": 4,  "新竹縣": 5,  "桃園市": 6,
-    "苗栗縣": 7,  "臺中市": 8,  "彰化縣": 10,
-    "南投縣": 11, "嘉義市": 12, "嘉義縣": 13,
-    "雲林縣": 14, "臺南市": 15, "高雄市": 17,
-    "屏東縣": 19, "宜蘭縣": 21, "臺東縣": 22,
-    "花蓮縣": 23, "澎湖縣": 24, "金門縣": 25,
-}
-
-# 區→縣市 對照
-DISTRICT_TO_CITY = {
-    # 台北市
-    "松山區": "臺北市", "信義區": "臺北市", "大安區": "臺北市",
-    "中山區": "臺北市", "中正區": "臺北市", "大同區": "臺北市",
-    "萬華區": "臺北市", "文山區": "臺北市", "南港區": "臺北市",
-    "內湖區": "臺北市", "士林區": "臺北市", "北投區": "臺北市",
-    # 新北市
-    "板橋區": "新北市", "新莊區": "新北市", "中和區": "新北市",
-    "永和區": "新北市", "土城區": "新北市", "樹林區": "新北市",
-    "三重區": "新北市", "蘆洲區": "新北市", "汐止區": "新北市",
-    "三峽區": "新北市", "鶯歌區": "新北市", "淡水區": "新北市",
-    "新店區": "新北市", "林口區": "新北市", "五股區": "新北市",
-    "泰山區": "新北市", "瑞芳區": "新北市", "八里區": "新北市",
-    "深坑區": "新北市", "三芝區": "新北市", "萬里區": "新北市",
-    "金山區": "新北市", "貢寮區": "新北市", "石門區": "新北市",
-    "坪林區": "新北市", "烏來區": "新北市", "雙溪區": "新北市",
-    "石碇區": "新北市", "平溪區": "新北市",
-    # 桃園市
-    "桃園區": "桃園市", "中壢區": "桃園市", "平鎮區": "桃園市",
-    "八德區": "桃園市", "楊梅區": "桃園市", "蘆竹區": "桃園市",
-    "龜山區": "桃園市", "大溪區": "桃園市", "龍潭區": "桃園市",
-    "大園區": "桃園市", "觀音區": "桃園市", "新屋區": "桃園市",
-    "復興區": "桃園市",
-    # 台中市
-    "西屯區": "臺中市", "北屯區": "臺中市", "南屯區": "臺中市",
-    "西區": "臺中市", "北區": "臺中市", "南區": "臺中市",
-    "東區": "臺中市", "豐原區": "臺中市", "大里區": "臺中市",
-    "太平區": "臺中市", "烏日區": "臺中市", "潭子區": "臺中市",
-    "大雅區": "臺中市", "神岡區": "臺中市", "沙鹿區": "臺中市",
-    "清水區": "臺中市", "梧棲區": "臺中市", "龍井區": "臺中市",
-    "大肚區": "臺中市", "后里區": "臺中市", "霧峰區": "臺中市",
-    # 台南市
-    "安平區": "臺南市", "安南區": "臺南市", "永康區": "臺南市",
-    "仁德區": "臺南市", "歸仁區": "臺南市", "新化區": "臺南市",
-    "善化區": "臺南市",
-    # 高雄市
-    "苓雅區": "高雄市", "前鎮區": "高雄市", "三民區": "高雄市",
-    "鼓山區": "高雄市", "左營區": "高雄市", "楠梓區": "高雄市",
-    "鳳山區": "高雄市", "小港區": "高雄市", "前金區": "高雄市",
-    "新興區": "高雄市", "鹽埕區": "高雄市", "旗津區": "高雄市",
-}
-
-
-# ========== 地址處理 ==========
-
-def extract_city(addr: str) -> str:
-    s = fullwidth_to_halfwidth(str(addr).strip())
-    for city in CITIES:
-        if s.startswith(city):
-            return city.replace("台北市", "臺北市").replace("台中市", "臺中市").replace("台南市", "臺南市").replace("台東縣", "臺東縣")
-    return ""
-
-
-def extract_district(addr: str) -> str:
-    s = fullwidth_to_halfwidth(str(addr).strip())
-    for city in CITIES:
-        if s.startswith(city):
-            s = s[len(city):]
-            break
-    # 使用非貪婪匹配，避免 "西屯區市政..." 誤匹配為 "西屯區市"
-    m = re.match(r"([\u4e00-\u9fff]{1,3}?[區鎮鄉市])", s)
-    return m.group(1) if m else ""
-
-
-def normalize_address(addr: str) -> str:
-    """正規化地址：去除縣市/區/里鄰/樓層/棟號，僅保留路段+門牌"""
-    s = str(addr).strip()
-    if not s:
-        return ""
-    s = fullwidth_to_halfwidth(s)
-
-    for city in CITIES:
-        if s.startswith(city):
-            s = s[len(city):]
-            break
-    for _ in range(2):
-        s = re.sub(r"^[\u4e00-\u9fff]{1,3}[區鎮鄉市]", "", s)
-
-    s = re.sub(r"[\u4e00-\u9fff]*里\d*鄰?", "", s)
-    s = re.sub(r"\d+鄰", "", s)
-    s = re.sub(r"[,\s]*(地下)?[\d]+樓.*$", "", s)
-    s = re.sub(r"[,\s]*(地下)?(十|二十|三十)?[一二三四五六七八九十百]+樓.*$", "", s)
-    s = re.sub(r"\s*\d+F$", "", s)
-    s = re.sub(r"\s*[A-Za-z]\d*[-]\d+F$", "", s)
-    s = re.sub(r"\s*[A-Za-z]\d*棟.*$", "", s)
-    s = re.sub(r"\s+[A-Za-z]\d+[-][A-Za-z]?\d*F?$", "", s)
-    s = re.sub(r"旁.*$", "", s)
-    s = re.sub(r"之\d+$", "", s)
-    s = re.sub(r"共\d+筆$", "", s)
-    s = re.sub(r"\s+", "", s)
-    return s.strip()
-
-
-def extract_road_number(addr: str) -> str:
-    m = re.search(r"(.*?\d+號)", addr)
-    return m.group(1) if m else addr
-
-
-def extract_road_alley(addr: str) -> str:
-    m = re.search(r"(.*?\d+巷)", addr)
-    return m.group(1) if m else ""
-
-
-def extract_road(addr: str) -> str:
-    m = re.search(
-        r"([\u4e00-\u9fff]+(?:路|街|大道)(?:[一二三四五六七八九十]+段)?)", addr
-    )
-    return m.group(1) if m else ""
-
-
-def infer_city(addr: str) -> str:
-    """從地址推斷縣市"""
-    city = extract_city(addr)
-    if city:
-        return city
-    district = extract_district(addr)
-    if district and district in DISTRICT_TO_CITY:
-        return DISTRICT_TO_CITY[district]
-    return ""
+# ========== 相容性別名 ==========
+# 舊版函式名 → address_utils 對應
+extract_district = extract_district_name
+DISTRICT_TO_CITY = DISTRICT_CITY_MAP
 
 
 def get_county_city(addr: str) -> str:
-    """從地址取得 land_data.db 格式的縣市名稱"""
+    """從地址取得 land_data.db 格式的縣市名稱（台）"""
     city = infer_city(addr)
-    if city:
-        return normalize_city_name(city)
-    return ""
+    return normalize_city_name(city) if city else ''
 
 
-def get_591_regionids(addr: str) -> list:
-    """根據地址取得要嘗試的 591 regionid 列表"""
-    city = infer_city(addr)
-    # 統一用臺 查 CITY_TO_591_REGION
-    city_tw = city.replace("台北市", "臺北市").replace("台中市", "臺中市") \
-                  .replace("台南市", "臺南市").replace("台東縣", "臺東縣")
-    if city_tw and city_tw in CITY_TO_591_REGION:
-        return [CITY_TO_591_REGION[city_tw]]
-    return [1, 3, 6, 8, 15, 17, 5, 4, 10, 21, 19]
+# ========== 591 API (使用統一客戶端) ==========
+# Api591Client 已從 api591.py 匯入，提供:
+#   - search_by_address(address) → 用地址搜尋社區
+#   - search_by_name(name) → 用建案名稱搜尋
+#   - search_community(keyword, regionid) → 基礎搜尋
 
-
-# ========== 591 API ==========
-
-class Api591:
-    """591 社區搜尋 API"""
-
-    BASE_URL = "https://bff.591.com.tw"
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-        "Accept": "application/json",
-        "Referer": "https://community.591.com.tw/",
-    }
-
-    @classmethod
-    def search_community(cls, keyword: str, regionid: int, timeout: int = 8) -> list:
-        """搜尋社區"""
-        params = urllib.parse.urlencode({
-            "keyword": keyword,
-            "regionid": regionid,
-        })
-        url = f"{cls.BASE_URL}/v1/community/search/match?{params}"
-
-        try:
-            req = urllib.request.Request(url, headers=cls.HEADERS)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                data = json.loads(r.read().decode("utf-8"))
-                if data.get("status") == 1:
-                    items = data.get("data", {}).get("items", [])
-                    return [item for item in items if item.get("name")]
-        except Exception:
-            pass
-        return []
-
-    @classmethod
-    def search_by_address(cls, address: str, regionids: list = None) -> dict:
-        """用地址搜尋社區，回傳最佳匹配"""
-        norm = normalize_address(address)
-
-        keywords = []
-        road_number = extract_road_number(norm)
-        road = extract_road(norm)
-
-        if road_number:
-            keywords.append(road_number)
-        if road_number and road_number.endswith("號"):
-            keywords.append(road_number[:-1])
-        if road:
-            keywords.append(road)
-
-        if not regionids:
-            regionids = get_591_regionids(address)
-
-        for rid in regionids:
-            for keyword in keywords:
-                results = cls.search_community(keyword, rid)
-                if results:
-                    best = cls._find_best_match(results, norm)
-                    if best:
-                        return best
-            if road:
-                results = cls.search_community(road, regionids[0] if regionids else rid)
-                if results:
-                    best = cls._find_best_match(results, norm)
-                    if best:
-                        return best
-
-        return None
-
-    @classmethod
-    def _find_best_match(cls, results: list, norm_addr: str) -> dict:
-        """從搜尋結果中找最佳匹配"""
-        num_match = re.search(r"(\d+)號", norm_addr)
-        target_num = int(num_match.group(1)) if num_match else None
-        road = extract_road(norm_addr)
-        target_alley = extract_road_alley(norm_addr)
-
-        best = None
-        best_score = -1
-
-        for item in results:
-            item_addr = item.get("address", "")
-            if not item_addr or not item.get("name"):
-                continue
-
-            score = 0
-
-            item_road = extract_road(item_addr)
-            if road and item_road and road == item_road:
-                score += 10
-
-            item_alley = extract_road_alley(item_addr)
-            if target_alley and item_alley and target_alley == item_alley:
-                score += 10
-
-            if target_num:
-                item_num_match = re.search(r"(\d+)號", item_addr)
-                if item_num_match:
-                    item_num = int(item_num_match.group(1))
-                    diff = abs(target_num - item_num)
-                    if diff == 0:
-                        score += 20
-                    elif diff <= 2:
-                        score += 15
-                    elif diff <= 5:
-                        score += 10
-                    elif diff <= 20:
-                        score += 5
-                    elif diff <= 50:
-                        score += 2
-
-            if score > best_score:
-                best_score = score
-                best = item
-
-        return best if best_score >= 15 else None
+# 相容性別名 (舊代碼可能用 Api591.search_by_address)
+Api591 = Api591Client
 
 
 # ========== 地址解析（用於索引查詢） ==========
@@ -354,50 +75,17 @@ def parse_address_fields(addr: str) -> dict:
     """
     解析地址為結構化欄位，對應 land_data.db 的 district/street/lane/number。
     回傳 {'district': '松山區', 'street': '八德路四段', 'lane': '112', 'number': '445'}
+    委託 address_utils.parse_address() 執行。
     """
-    s = fullwidth_to_halfwidth(str(addr).strip())
-    result = {'district': '', 'street': '', 'lane': '', 'alley': '', 'number': '', 'sub_number': ''}
-
-    # 去除縣市
-    for city in CITIES:
-        if s.startswith(city):
-            s = s[len(city):]
-            break
-
-    # 取區
-    m = re.match(r'([\u4e00-\u9fff]{1,3}?[區鎮鄉市])', s)
-    if m:
-        result['district'] = m.group(1)
-        s = s[len(m.group(1)):]
-
-    # 去除里鄰
-    s = re.sub(r'[\u4e00-\u9fff]*里\d*鄰?', '', s)
-    s = re.sub(r'\d+鄰', '', s)
-
-    # 取路/街/大道+段
-    m = re.search(r'([\u4e00-\u9fff]+(?:路|街|大道)(?:[一二三四五六七八九十]+段)?)', s)
-    if m:
-        result['street'] = m.group(1)
-        s = s[m.end():]
-
-    # 取巷
-    m = re.search(r'(\d+)巷', s)
-    if m:
-        result['lane'] = m.group(1)
-
-    # 取弄
-    m = re.search(r'(\d+)弄', s)
-    if m:
-        result['alley'] = m.group(1)
-
-    # 取號（支援 "之X號" 格式）
-    m = re.search(r'(\d+)(?:之(\d+))?號', s)
-    if m:
-        result['number'] = m.group(1)
-        if m.group(2):
-            result['sub_number'] = m.group(2)
-
-    return result
+    p = parse_address(addr)
+    return {
+        'district': p.get('district', ''),
+        'street': p.get('street', ''),
+        'lane': p.get('lane', ''),
+        'alley': p.get('alley', ''),
+        'number': p.get('number', ''),
+        'sub_number': p.get('sub_number', ''),
+    }
 
 
 # ========== 核心查詢引擎 ==========
@@ -414,6 +102,7 @@ class AddressCommunityLookup:
         self.enable_api = enable_api
         self.verbose = verbose
         self.conn = None
+        self._api591 = None  # 延遲初始化
         self._connect_db()
 
     def _connect_db(self):
@@ -628,7 +317,7 @@ class AddressCommunityLookup:
 
     def query(self, address: str, top_n: int = 5) -> dict:
         """查詢地址對應的社區/建案名稱（使用索引查詢，毫秒級）"""
-        norm = normalize_address(address)
+        norm = strip_to_road_number(address)
         input_district = extract_district(address)
         input_city = infer_city(address)
         county_city = get_county_city(address)
@@ -758,7 +447,9 @@ class AddressCommunityLookup:
             print(f"     🌐 查詢 591 API...")
 
         regionids = get_591_regionids(original_addr)
-        result = Api591.search_by_address(original_addr, regionids)
+        if self._api591 is None:
+            self._api591 = Api591Client()
+        result = self._api591.search_by_address(original_addr, regionids)
 
         if result:
             name = result.get("name", "")
@@ -778,7 +469,7 @@ class AddressCommunityLookup:
         # 路段搜尋取近鄰
         road = extract_road(norm)
         if road and regionids:
-            results = Api591.search_community(road, regionids[0])
+            results = self._api591.search_community(road, regionids[0])
             if results:
                 candidates = []
                 for item in results:

@@ -669,3 +669,181 @@ def parse_query(query: str) -> dict:
             result['sub_number'] = m.group(1)
 
     return result
+
+
+# ============================================================
+# 地址元件提取 (供各模組共用)
+# ============================================================
+
+# 正規化後的縣市列表（使用「台」而非「臺」）
+CITIES = [
+    '台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市',
+    '基隆市', '新竹市', '新竹縣', '苗栗縣', '彰化縣',
+    '南投縣', '雲林縣', '嘉義市', '嘉義縣', '屏東縣',
+    '宜蘭縣', '花蓮縣', '台東縣', '澎湖縣',
+    '金門縣', '連江縣',
+]
+
+# 同時包含「臺」版本 — 方便比對未正規化的原始地址
+_CITIES_MATCH = CITIES + [
+    '臺北市', '臺中市', '臺南市', '臺東縣', '桃園縣',
+]
+
+# 591 API 的 regionid 對照
+CITY_TO_591_REGION = {
+    '台北市': 1, '臺北市': 1,
+    '基隆市': 2, '新北市': 3,
+    '新竹市': 4, '新竹縣': 5,
+    '桃園市': 6, '桃園縣': 6,
+    '苗栗縣': 7, '台中市': 8, '臺中市': 8,
+    '彰化縣': 10, '南投縣': 11,
+    '嘉義市': 12, '嘉義縣': 13,
+    '雲林縣': 14, '台南市': 15, '臺南市': 15,
+    '高雄市': 17, '屏東縣': 19,
+    '宜蘭縣': 21, '台東縣': 22, '臺東縣': 22,
+    '花蓮縣': 23, '澎湖縣': 24, '金門縣': 25,
+}
+
+DEFAULT_591_REGION_ORDER = [1, 3, 6, 8, 15, 17, 5, 4, 10, 21, 19]
+
+
+def normalize_city_name(city: str) -> str:
+    """正規化縣市名稱：臺→台，舊縣→新市"""
+    if not city:
+        return ''
+    c = city.replace('臺', '台')
+    return OLD_TO_NEW.get(c, c)
+
+
+def extract_city(addr: str) -> str:
+    """從地址提取縣市名稱（已正規化為「台」）"""
+    s = fullwidth_to_halfwidth(str(addr).strip()).replace('臺', '台')
+    m = CITY_PATTERN.match(s)
+    if m:
+        return OLD_TO_NEW.get(m.group(1), m.group(1))
+    return ''
+
+
+def extract_district_name(addr: str) -> str:
+    """從地址提取鄉鎮市區名稱（去除縣市前綴後取區名）"""
+    s = fullwidth_to_halfwidth(str(addr).strip()).replace('臺', '台')
+    m = CITY_PATTERN.match(s)
+    if m:
+        s = s[m.end():]
+    m = _RE_DISTRICT.match(s)
+    return m.group(1) if m else ''
+
+
+def infer_city(addr: str) -> str:
+    """從地址推斷縣市（直接提取 → 從區名查 DISTRICT_CITY_MAP）"""
+    city = extract_city(addr)
+    if city:
+        return city
+    district = extract_district_name(addr)
+    if district:
+        city = DISTRICT_CITY_MAP.get(district, '')
+        if not city and district in AMBIGUOUS_DISTRICTS:
+            city = AMBIGUOUS_DISTRICTS[district][0]
+        return city
+    return ''
+
+
+def get_591_regionids(addr: str) -> list:
+    """根據地址取得 591 API regionid 列表"""
+    city = infer_city(addr)
+    if city and city in CITY_TO_591_REGION:
+        return [CITY_TO_591_REGION[city]]
+    return list(DEFAULT_591_REGION_ORDER)
+
+
+def strip_city_district(addr: str) -> str:
+    """去除縣市和鄉鎮市區，僅保留路段+門牌"""
+    s = fullwidth_to_halfwidth(str(addr).strip())
+    s_match = s.replace('臺', '台')
+    m = CITY_PATTERN.match(s_match)
+    if m:
+        s = s[m.end():]
+    s = re.sub(r'^[\u4e00-\u9fff]{1,3}?[區鎮鄉市]', '', s)
+    return s.strip()
+
+
+def strip_to_road_number(addr: str) -> str:
+    """去除縣市/區/里鄰/樓層/棟號，僅保留路段+門牌。
+
+    例如：'臺中市北區三民路三段100號8樓' → '三民路三段100號'
+    """
+    s = strip_city_district(str(addr))
+    # 去里鄰
+    s = re.sub(r'[\u4e00-\u9fff]*里\d*鄰?', '', s)
+    s = re.sub(r'\d+鄰', '', s)
+    # 去樓層
+    s = re.sub(r'[,，\s]*(地下)?[\d]+樓.*$', '', s)
+    s = re.sub(r'[,，\s]*(地下)?(十|二十|三十)?[一二三四五六七八九十百]+樓.*$', '', s)
+    s = re.sub(r'\s*\d+F$', '', s)
+    s = re.sub(r'\s*[A-Za-z]\d*[-]\d+F$', '', s)
+    # 去棟號
+    s = re.sub(r'\s*[A-Za-z]\d*棟.*$', '', s)
+    s = re.sub(r'\s+[A-Za-z]\d+[-][A-Za-z]?\d*F?$', '', s)
+    # 去旁/之/共
+    s = re.sub(r'旁.*$', '', s)
+    s = re.sub(r'之\d+$', '', s)
+    s = re.sub(r'共\d+筆$', '', s)
+    s = re.sub(r'\s+', '', s)
+    return s.strip()
+
+
+_RE_EXTRACT_ROAD = re.compile(
+    r'([\u4e00-\u9fff]+(?:路|街|大道)(?:[一二三四五六七八九十]+段)?)'
+)
+_RE_EXTRACT_ROAD_ALLEY = re.compile(
+    r'([\u4e00-\u9fff]+?(?:路|街|大道)(?:[一二三四五六七八九十]+段)?'
+    r'(?:\d+巷(?:\d+弄)?)?)'
+)
+
+
+def extract_road(addr: str) -> str:
+    """提取路/街/大道名稱（含段），例如 '三民路三段' """
+    s = strip_city_district(addr)
+    m = _RE_EXTRACT_ROAD.search(s)
+    return m.group(1) if m else ''
+
+
+def extract_road_alley(addr: str) -> str:
+    """提取路段+巷弄（不含門牌號），例如 '三民路29巷' """
+    s = strip_city_district(addr)
+    # 去里鄰
+    s = re.sub(r'[\u4e00-\u9fff]*里\d*鄰?', '', s)
+    s = re.sub(r'\d+鄰', '', s)
+    m = _RE_EXTRACT_ROAD_ALLEY.search(s)
+    return m.group(1) if m else ''
+
+
+def extract_road_number(addr: str) -> str:
+    """提取到「XX號」為止的字串，例如 '三民路29巷6號' """
+    m = re.search(r'(.*?\d+號)', addr)
+    return m.group(1) if m else addr
+
+
+def extract_house_number(addr: str) -> int:
+    """從地址提取門牌號碼（整數）。優先取巷弄號，否則取路號。回傳 -1 表示無號。"""
+    s = fullwidth_to_halfwidth(str(addr))
+    # 先嘗試巷弄號：如 '29巷5號' 取 5
+    m = re.search(r'巷(\d+)號', s)
+    if m:
+        return int(m.group(1))
+    # 再嘗試一般號碼
+    m = re.search(r'(\d+)號', s)
+    if m:
+        return int(m.group(1))
+    return -1
+
+
+def normalize_community_name(name: str) -> str:
+    """正規化建案名稱：去空白、全形→半形（含英數字母）、統一大寫"""
+    if not name:
+        return ''
+    s = name.strip()
+    s = fullwidth_to_halfwidth(s)
+    s = s.upper()
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s

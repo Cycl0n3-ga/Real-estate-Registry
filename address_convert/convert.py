@@ -701,17 +701,18 @@ class LandDataDB:
 
     def fast_insert_records(self, records):
         """
-        批次快速插入 (跳過逐筆 upsert 的 Python 開銷)。
+        批次快速插入 (保留 enrich 補充能力)。
 
-        適用於: rebuild 模式或確認無需 enrich 的場景。
         邏輯:
           1. 使用預計算的 _dedup_key (若有)
           2. 批次 bloom filter 檢查 (Python set 去重同批重複)
-          3. 一次 executemany 插入
+          3. bloom hit → 查 DB → enrich 或 duplicate
+          4. 新記錄 → 一次 executemany 插入
 
-        比 upsert_record 快 3-4 倍 (減少 per-record Python 開銷)。
+        比 upsert_record 快 2-3 倍 (減少 per-record Python 開銷)。
         """
         batch_insert = []
+        enrich_candidates = []  # bloom hit → 需檢查 DB
         _norm = norm_addr_simple
         _strip = strip_city
         _bloom = self._bloom
@@ -746,13 +747,13 @@ class LandDataDB:
                 dedup_key = f"{d}|{addr_norm}|{price}" if addr_norm else None
 
             if dedup_key:
-                # 快速去重: set + bloom (不查 DB)
                 if dedup_key in _batch_keys:
                     stats['duplicated'] += 1
                     continue
 
                 if dedup_key in _bloom:
-                    stats['duplicated'] += 1
+                    # bloom hit → 收集待查 DB 確認
+                    enrich_candidates.append((dedup_key, rec))
                     continue
 
                 _batch_keys.add(dedup_key)
@@ -762,9 +763,13 @@ class LandDataDB:
             batch_insert.append((*values, dedup_key))
             stats['inserted'] += 1
 
-        # 批量插入
+        # 批量插入新記錄
         if batch_insert:
             self.conn.executemany(INSERT_DEDUP_SQL, batch_insert)
+
+        # 處理 bloom hit: 查 DB → enrich 或 duplicate
+        if enrich_candidates:
+            self._process_enrich_records(enrich_candidates)
 
         # 避免 batch_keys 無限成長
         if len(self._batch_keys) > 100000:
@@ -772,12 +777,15 @@ class LandDataDB:
 
     def fast_insert_tuples(self, tuples_list):
         """
-        極速批次插入 (直接接收 tuple 列表，跳過所有 dict 開銷)。
+        極速批次插入 (直接接收 tuple 列表，保留 enrich 補充能力)。
 
         每個 tuple 格式: (*LAND_COLUMNS_values, dedup_key)
         address 欄位在 tuple[2]，dedup_key 在 tuple[-1]。
+
+        bloom hit 時會查 DB 確認 → enrich 或 duplicate。
         """
         batch_insert = []
+        enrich_candidates = []  # bloom hit → 需檢查 DB
         _bloom = self._bloom
         _batch_keys = self._batch_keys
         stats = self._stats
@@ -802,7 +810,8 @@ class LandDataDB:
                     stats['duplicated'] += 1
                     continue
                 if dedup_key in _bloom:
-                    stats['duplicated'] += 1
+                    # bloom hit → 收集待查 DB 確認
+                    enrich_candidates.append((dedup_key, tup))
                     continue
                 _batch_keys.add(dedup_key)
                 _bloom.add(dedup_key)
@@ -813,8 +822,90 @@ class LandDataDB:
         if batch_insert:
             self.conn.executemany(INSERT_DEDUP_SQL, batch_insert)
 
+        # 處理 bloom hit: 查 DB → enrich 或 duplicate
+        if enrich_candidates:
+            self._process_enrich_tuples(enrich_candidates)
+
         if len(self._batch_keys) > 100000:
             self._batch_keys.clear()
+
+    # ------------------------------------------------------------------
+    # enrich 處理 (bloom hit 後查 DB 確認)
+    # ------------------------------------------------------------------
+
+    def _process_enrich_records(self, candidates):
+        """處理 fast_insert_records 的 bloom hit 候選: 查 DB → enrich 或 duplicate。"""
+        stats = self._stats
+        cur = self.conn.cursor()
+        false_positive_inserts = []
+
+        for dedup_key, rec in candidates:
+            row = cur.execute(
+                'SELECT id FROM land_transaction WHERE dedup_key = ?',
+                (dedup_key,)
+            ).fetchone()
+            if row:
+                existing_id = row[0]
+                enriched = self._try_enrich(existing_id, rec)
+                if enriched:
+                    stats['enriched'] += 1
+                    if _VERBOSE and self._verbose_count['enriched'] < _VERBOSE_MAX:
+                        addr = rec.get('address', '')
+                        log_print(f'    [補充] id={existing_id} 欄位={list(enriched.keys())}: {addr}')
+                        self._verbose_count['enriched'] += 1
+                else:
+                    stats['duplicated'] += 1
+                    if _VERBOSE and self._verbose_count['duplicated'] < _VERBOSE_MAX:
+                        log_print(f'    [重複] id={existing_id} key={dedup_key}: {rec.get("address", "")}')
+                        self._verbose_count['duplicated'] += 1
+            else:
+                # Bloom false positive → 插入
+                values = tuple(rec.get(col) for col in LAND_COLUMNS)
+                false_positive_inserts.append((*values, dedup_key))
+                self._batch_keys.add(dedup_key)
+                stats['inserted'] += 1
+
+        if false_positive_inserts:
+            self.conn.executemany(INSERT_DEDUP_SQL, false_positive_inserts)
+        self._flush_enriches()
+
+    def _process_enrich_tuples(self, candidates):
+        """處理 fast_insert_tuples 的 bloom hit 候選: 查 DB → enrich 或 duplicate。"""
+        stats = self._stats
+        cur = self.conn.cursor()
+        false_positive_inserts = []
+        _n_cols = len(LAND_COLUMNS)
+
+        for dedup_key, tup in candidates:
+            row = cur.execute(
+                'SELECT id FROM land_transaction WHERE dedup_key = ?',
+                (dedup_key,)
+            ).fetchone()
+            if row:
+                existing_id = row[0]
+                # tuple → dict 以便 _try_enrich 使用
+                rec = dict(zip(LAND_COLUMNS, tup[:_n_cols]))
+                enriched = self._try_enrich(existing_id, rec)
+                if enriched:
+                    stats['enriched'] += 1
+                    if _VERBOSE and self._verbose_count['enriched'] < _VERBOSE_MAX:
+                        addr = tup[2] or ''
+                        log_print(f'    [補充] id={existing_id} 欄位={list(enriched.keys())}: {addr}')
+                        self._verbose_count['enriched'] += 1
+                else:
+                    stats['duplicated'] += 1
+                    if _VERBOSE and self._verbose_count['duplicated'] < _VERBOSE_MAX:
+                        log_print(f'    [重複] id={existing_id} key={dedup_key}: {tup[2] or ""}')
+                        self._verbose_count['duplicated'] += 1
+            else:
+                # Bloom false positive → 插入
+                false_positive_inserts.append(tup)
+                self._batch_keys.add(dedup_key)
+                stats['inserted'] += 1
+
+        if false_positive_inserts:
+            self.conn.executemany(INSERT_DEDUP_SQL, false_positive_inserts)
+        self._flush_enriches()
 
     def backfill_community(self, api_db_path: str):
         """

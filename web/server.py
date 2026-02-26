@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 良富居地產 v3.0 — 後端 API 伺服器
-整合 address_search、com2address、address2com 模組
-使用 Flask + SQLite (land_a.db)
+整合 address_match、com2address、address2com 模組
+使用 Flask + SQLite (land_data.db)
 """
 
 import os
@@ -21,22 +21,23 @@ from flask_cors import CORS
 # ── 路徑設定 ──────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent                # land/web
 LAND_DIR = BASE_DIR.parent                      # land
-LAND_REG_DIR = LAND_DIR / "land_reg"
-ADDR_SEARCH_DIR = LAND_REG_DIR / "address_search"
+ADDR_MATCH_DIR = LAND_DIR / "address_match"
 COM2ADDR_DIR = LAND_DIR / "com2address"
 ADDR2COM_DIR = LAND_DIR / "address2com"
-GEODECODING_DIR = LAND_REG_DIR / "geodecoding"
+GEODECODING_DIR = LAND_DIR / "geodecoding"
 
 # 將模組路徑加入 sys.path
-for p in [str(ADDR_SEARCH_DIR), str(COM2ADDR_DIR), str(ADDR2COM_DIR), str(GEODECODING_DIR)]:
+for p in [str(ADDR_MATCH_DIR), str(COM2ADDR_DIR), str(ADDR2COM_DIR),
+          str(GEODECODING_DIR), str(LAND_DIR)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
 # 匯入模組
-from address_transfer import (
+from address_match import (
     search_address, generate_address_variants, parse_range,
-    SORT_OPTIONS, fullwidth_to_halfwidth, halfwidth_to_fullwidth
+    SORT_OPTIONS,
 )
+from address_utils import fullwidth_to_halfwidth, halfwidth_to_fullwidth
 from community2address import Community2AddressLookup
 from address2community import lookup as addr2com_lookup
 from geocoder import TaiwanGeocoder
@@ -45,7 +46,7 @@ from geocoder import TaiwanGeocoder
 app = Flask(__name__, static_folder="static")
 CORS(app)
 
-DB_PATH = str(LAND_DIR / "db" / "land_a.db")
+DB_PATH = str(LAND_DIR / "db" / "land_data.db")
 PING_TO_SQM = 3.30579
 
 # ── 行政區座標映射 ────────────────────────────────────────────────────────────
@@ -547,7 +548,7 @@ def api_stats():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("🏢 良富居地產 v3.0 — 新版前端伺服器")
+    print("🏢 良富居地產 v3.0 — API 伺服器")
     print("=" * 60)
     print(f"📁 資料庫: {DB_PATH}")
     print(f"📁 com2address: {COM2ADDR_DIR}")

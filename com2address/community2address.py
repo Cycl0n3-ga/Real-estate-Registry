@@ -25,8 +25,6 @@ import re
 import sqlite3
 import sys
 import time
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from collections import defaultdict
 from typing import Optional, Dict, List
@@ -37,89 +35,18 @@ LAND_DIR = SCRIPT_DIR.parent
 DB_PATH = LAND_DIR / "db" / "land_data.db"
 MANUAL_CSV = LAND_DIR / "db" / "manual_mapping.csv"
 
-# ========== 全形半形轉換 ==========
-FULLWIDTH_DIGITS = "０１２３４５６７８９"
-HALFWIDTH_DIGITS = "0123456789"
-FULLWIDTH_UPPER = "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺ"
-HALFWIDTH_UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-FULLWIDTH_LOWER = "ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ"
-HALFWIDTH_LOWER = "abcdefghijklmnopqrstuvwxyz"
-FW_TO_HW = str.maketrans(
-    FULLWIDTH_DIGITS + FULLWIDTH_UPPER + FULLWIDTH_LOWER,
-    HALFWIDTH_DIGITS + HALFWIDTH_UPPER + HALFWIDTH_LOWER,
+# ========== 共用模組 ==========
+sys.path.insert(0, str(LAND_DIR))
+from address_utils import (
+    fullwidth_to_halfwidth,
+    normalize_community_name, strip_city_district,
+    extract_road_alley, extract_house_number,
+    CITIES,
 )
-HW_TO_FW = str.maketrans(HALFWIDTH_DIGITS, FULLWIDTH_DIGITS)
+from api591 import Api591Client
 
-
-def fullwidth_to_halfwidth(s: str) -> str:
-    return s.translate(FW_TO_HW)
-
-
-# ========== 縣市列表 ==========
-CITIES = [
-    "臺北市", "台北市", "新北市", "桃園市", "桃園縣",
-    "臺中市", "台中市", "臺南市", "台南市", "高雄市",
-    "基隆市", "新竹市", "新竹縣", "苗栗縣", "彰化縣",
-    "南投縣", "雲林縣", "嘉義市", "嘉義縣", "屏東縣",
-    "宜蘭縣", "花蓮縣", "臺東縣", "台東縣", "澎湖縣",
-    "金門縣", "連江縣",
-]
-
-
-def normalize_community_name(name: str) -> str:
-    """正規化建案名稱：去空白、全形→半形數字/字母、英文字母統一為大寫"""
-    if not name:
-        return ""
-    s = name.strip()
-    s = fullwidth_to_halfwidth(s)
-    # 英文字母統一大寫（建案名如 F區/f區 應視為相同）
-    s = s.upper()
-    # 去除多餘空白
-    s = re.sub(r'\s+', ' ', s).strip()
-    return s
-
-
-def strip_city_district(addr: str) -> str:
-    """從地址中移除縣市和鄉鎮市區，只保留路段+門牌"""
-    s = fullwidth_to_halfwidth(str(addr).strip())
-    for city in CITIES:
-        if s.startswith(city):
-            s = s[len(city):]
-            break
-    # 去除鄉鎮市區
-    s = re.sub(r'^[\u4e00-\u9fff]{1,3}[區鎮鄉市]', '', s)
-    return s.strip()
-
-
-def extract_number(addr: str) -> int:
-    """從地址中提取門牌號碼"""
-    s = fullwidth_to_halfwidth(str(addr))
-    # 先嘗試巷弄號：如 "29巷5號" 取 5
-    m = re.search(r'巷(\d+)號', s)
-    if m:
-        return int(m.group(1))
-    # 再嘗試一般號碼：如 "三民路100號" 取 100
-    m = re.search(r'(\d+)號', s)
-    if m:
-        return int(m.group(1))
-    return -1
-
-
-def extract_road_alley(addr: str) -> str:
-    """提取路段+巷弄（不含門牌號）"""
-    s = fullwidth_to_halfwidth(str(addr).strip())
-    # 去除縣市和區
-    for city in CITIES:
-        if s.startswith(city):
-            s = s[len(city):]
-            break
-    s = re.sub(r'^[\u4e00-\u9fff]{1,3}[區鎮鄉市]', '', s)
-    # 去除里鄰
-    s = re.sub(r'[\u4e00-\u9fff]*里\d*鄰?', '', s)
-    s = re.sub(r'\d+鄰', '', s)
-    # 提取到巷或路段（非貪婪，避免跨越多個路/街字元）
-    m = re.search(r'([一-鿿]+?(?:路|街|大道)(?:[一二三四五六七八九十]+段)?(?:\d+巷(?:\d+弄)?)?)', s)
-    return m.group(1) if m else ""
+# ========== 相容性別名 ==========
+extract_number = extract_house_number
 
 
 def format_address_range(addresses: list, raw_addresses: list = None) -> dict:
@@ -222,133 +149,6 @@ def format_address_range(addresses: list, raw_addresses: list = None) -> dict:
     }
 
 
-# ========== 591 API 客戶端 ==========
-
-CITY_TO_591_REGION = {
-    "臺北市": 1,  "台北市": 1,
-    "基隆市": 2,  "新北市": 3,
-    "新竹市": 4,  "新竹縣": 5,
-    "桃園市": 6,  "桃園縣": 6,
-    "苗栗縣": 7,  "臺中市": 8,
-    "台中市": 8,  "彰化縣": 10,
-    "南投縣": 11, "嘉義市": 12,
-    "嘉義縣": 13, "雲林縣": 14,
-    "臺南市": 15, "台南市": 15,
-    "高雄市": 17, "屏東縣": 19,
-    "宜蘭縣": 21, "臺東縣": 22,
-    "台東縣": 22, "花蓮縣": 23,
-    "澎湖縣": 24, "金門縣": 25,
-}
-
-DEFAULT_REGION_ORDER = [1, 3, 6, 8, 15, 17, 5, 4, 10, 21, 19]
-
-
-class Api591Client:
-    """591.com.tw 社區搜尋 API 客戶端（使用標準庫 urllib）"""
-
-    BASE_URL = "https://bff.591.com.tw"
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-        "Accept": "application/json",
-        "Referer": "https://community.591.com.tw/",
-    }
-
-    def __init__(self, cache_dir: str = None, timeout: int = 8):
-        self.timeout = timeout
-        self.cache_dir = Path(cache_dir or "/tmp/591_cache")
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-
-    def search_community(self, keyword: str, regionid: int) -> List[Dict]:
-        """搜尋社區/建案名稱"""
-        safe_key = keyword.replace("/", "_").replace("\\", "_")
-        cache_key = f"{regionid}_{safe_key}"
-        cached = self._get_cache(cache_key)
-        if cached is not None:
-            return cached
-
-        params = urllib.parse.urlencode({"keyword": keyword, "regionid": regionid})
-        url = f"{self.BASE_URL}/v1/community/search/match?{params}"
-
-        try:
-            req = urllib.request.Request(url, headers=self.HEADERS)
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
-                data = json.loads(r.read().decode("utf-8"))
-                if data.get("status") == 1:
-                    items = data.get("data", {}).get("items", [])
-                    result = [item for item in items if item.get("name")]
-                    self._save_cache(cache_key, result)
-                    return result
-        except Exception:
-            pass
-
-        self._save_cache(cache_key, [])
-        return []
-
-    def search_by_name(self, community_name: str,
-                       regionids: List[int] = None) -> Optional[Dict]:
-        """用建案名稱搜尋，回傳最佳匹配"""
-        if not regionids:
-            regionids = DEFAULT_REGION_ORDER
-
-        for rid in regionids:
-            items = self.search_community(community_name, rid)
-            if not items:
-                continue
-            best = self._best_match(items, community_name)
-            if best:
-                return best
-            time.sleep(0.1)
-
-        return None
-
-    @staticmethod
-    def _best_match(items: List[Dict], query: str) -> Optional[Dict]:
-        """從搜尋結果中選出最佳匹配"""
-        if not items:
-            return None
-
-        best = None
-        best_score = -1
-
-        for item in items:
-            name = item.get("name", "")
-            if not name:
-                continue
-            score = 0
-            if name == query:
-                score = 100
-            elif query in name:
-                score = 80 + len(query) * 2
-            elif name in query:
-                score = 70
-            else:
-                common = sum(1 for c in query if c in name)
-                if common:
-                    score = int(common / max(len(query), 1) * 40)
-
-            if score > best_score:
-                best_score = score
-                best = item
-
-        return best if best_score >= 20 else None
-
-    def _get_cache(self, key: str) -> Optional[List]:
-        cache_file = self.cache_dir / f"{key}.json"
-        if cache_file.exists():
-            try:
-                with open(cache_file, encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return None
-
-    def _save_cache(self, key: str, data):
-        cache_file = self.cache_dir / f"{key}.json"
-        try:
-            with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False)
-        except Exception:
-            pass
 
 
 # ========== 核心查詢引擎 ==========
@@ -638,15 +438,7 @@ class Community2AddressLookup:
         expanded = set()
         conn = self._conn
         for addr in addresses:
-            s = fullwidth_to_halfwidth(str(addr).strip())
-
-            # 去除縣市
-            for c in CITIES:
-                if s.startswith(c):
-                    s = s[len(c):]
-                    break
-            # 去除鄉鎮市區
-            s = re.sub(r'^[\u4e00-\u9fff]{1,3}[區鎮鄉市]', '', s)
+            s = strip_city_district(addr)
 
             # 解析 street (路/街/大道) 和 lane (巷)
             m = re.search(r'([一-鿿]+?(?:路|街|大道)(?:[一二三四五六七八九十]+段)?)', s)
