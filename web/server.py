@@ -271,27 +271,18 @@ def format_tx_row(row: dict) -> dict:
     district = str(row.get("district", "") or "")
     address = str(row.get("address", "") or "")
 
-    # 座標：優先用 OSM Geocoding，其次用 DB 中的座標，最後用行政區
+    # 座標：優先用 DB 中的座標（最快），其次用行政區，最後才用 OSM
     lat = None
     lng = None
     coord_source = "unknown"
-    
-    # 優先嘗試 OSM Geocoding
-    if geocoder_ready and geocoder_engine is not None and address:
-        geocoded_lat, geocoded_lng, geocoded_source = get_address_coords(address, district)
-        if geocoded_lat and geocoded_lng:
-            lat = geocoded_lat
-            lng = geocoded_lng
-            coord_source = geocoded_source or "osm"
-    
-    # 回退：DB 中的座標
-    if not lat or not lng:
-        lat = row.get("lat")
-        lng = row.get("lng")
-        if lat and lng:
-            coord_source = "db_cache"
-    
-    # 回退：行政區座標
+
+    # 優先用 DB 快取座標
+    lat = row.get("lat")
+    lng = row.get("lng")
+    if lat and lng:
+        coord_source = "db_cache"
+
+    # 回退：行政區座標（不做 OSM 查詢，避免每次 format 都發網路請求）
     if not lat or not lng:
         lat, lng = get_district_coords(district)
         coord_source = "district"
@@ -360,6 +351,78 @@ def compute_summary(transactions: list) -> dict:
     }
 
 
+def _build_filter_where(filters: dict, params: list) -> list:
+    """建立篩選 WHERE 子句（給 area 和 community 直查共用）"""
+    clauses = []
+    if filters.get("building_types"):
+        placeholders = ",".join(["?"] * len(filters["building_types"]))
+        clauses.append(f"building_type IN ({placeholders})")
+        params.extend(filters["building_types"])
+    if filters.get("rooms"):
+        placeholders = ",".join(["?"] * len(filters["rooms"]))
+        clauses.append(f"rooms IN ({placeholders})")
+        params.extend(filters["rooms"])
+    if filters.get("public_ratio_min") is not None or filters.get("public_ratio_max") is not None:
+        clauses.append("building_area > 0 AND main_area > 0")
+        pr = "CAST((building_area - main_area - COALESCE(attached_area,0) - COALESCE(balcony_area,0)) * 100.0 / building_area AS REAL)"
+        if filters.get("public_ratio_min") is not None:
+            clauses.append(f"{pr} >= ?")
+            params.append(float(filters["public_ratio_min"]))
+        if filters.get("public_ratio_max") is not None:
+            clauses.append(f"{pr} <= ?")
+            params.append(float(filters["public_ratio_max"]))
+    if filters.get("year_min") is not None:
+        clauses.append("CAST(SUBSTR(transaction_date, 1, 3) AS INTEGER) >= ?")
+        params.append(int(filters["year_min"]))
+    if filters.get("year_max") is not None:
+        clauses.append("CAST(SUBSTR(transaction_date, 1, 3) AS INTEGER) <= ?")
+        params.append(int(filters["year_max"]))
+    if filters.get("ping_min") is not None:
+        clauses.append("building_area >= ?")
+        params.append(float(filters["ping_min"]) * PING_TO_SQM)
+    if filters.get("ping_max") is not None:
+        clauses.append("building_area <= ?")
+        params.append(float(filters["ping_max"]) * PING_TO_SQM)
+    if filters.get("unit_price_min") is not None:
+        clauses.append("unit_price >= ?")
+        params.append(float(filters["unit_price_min"]) * 10000 / PING_TO_SQM)
+    if filters.get("unit_price_max") is not None:
+        clauses.append("unit_price <= ?")
+        params.append(float(filters["unit_price_max"]) * 10000 / PING_TO_SQM)
+    if filters.get("price_min") is not None:
+        clauses.append("total_price >= ?")
+        params.append(float(filters["price_min"]) * 10000)
+    if filters.get("price_max") is not None:
+        clauses.append("total_price <= ?")
+        params.append(float(filters["price_max"]) * 10000)
+    return clauses
+
+
+SELECT_COLS = """
+    id, district, address, transaction_date, total_price, unit_price,
+    building_area AS building_area_sqm, main_area AS main_building_area,
+    attached_area, balcony_area, rooms, halls, bathrooms,
+    floor_level, total_floors, building_type, main_use, main_material,
+    build_date AS completion_date, elevator, has_management,
+    parking_type, parking_price, parking_area AS parking_area_sqm,
+    note, lat, lng, community_name
+"""
+
+
+def _search_by_community_name(community_name: str, filters: dict, limit: int) -> list:
+    """直接用 community_name 索引查詢 DB，不走 address_match"""
+    params = [community_name]
+    filter_clauses = _build_filter_where(filters, params)
+    where_sql = "community_name = ?" + (" AND " + " AND ".join(filter_clauses) if filter_clauses else "")
+    sql = f"SELECT {SELECT_COLS} FROM land_transaction WHERE {where_sql} ORDER BY transaction_date DESC LIMIT ?"
+    params.append(limit)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    conn.close()
+    return [format_tx_row(r) for r in rows]
+
+
 def parse_filters_from_request() -> dict:
     """從 request.args 解析篩選參數"""
     filters = {}
@@ -426,26 +489,35 @@ def api_search():
 
     search_type = "address"
     community_name = None
-    search_addresses = []
+    matched_community_name = None  # DB 中的精確建案名（用於直查）
 
     # ── Step 1: 嘗試用 com2address（是否為建案名稱？）──
     if com2addr_ready and com2addr_engine:
         try:
-            com_result = com2addr_engine.query(keyword, top_n=3)
+            com_result = com2addr_engine.query(keyword, top_n=5)
             if com_result.get("found") and com_result.get("match_type") != "未找到":
                 mt = com_result.get("match_type", "")
-                if "精確" in mt or (com_result.get("address_range", {}).get("total_addresses", 0) > 0):
+                tx_count = com_result.get("transaction_count", 0) or 0
+                # 精確匹配且有足夠交易量，或模糊匹配分數高
+                if "精確" in mt and tx_count >= 2:
                     search_type = "community"
                     community_name = com_result.get("matched_name", keyword)
-                    raw_addrs = com_result.get("address_range", {}).get("raw_addresses", [])
-                    if raw_addrs:
-                        search_addresses = raw_addrs
-                        print(f"🏘️  建案搜尋: {keyword} → {community_name} ({len(search_addresses)} 地址)")
+                    matched_community_name = community_name
+                    print(f"🏘️  建案搜尋: {keyword} → {community_name} ({tx_count} 筆)")
+                elif "精確" not in mt:
+                    # 模糊匹配：找交易量最多的候選
+                    candidates = com_result.get("candidates", [])
+                    best = max(candidates, key=lambda x: x.get("tx_count", 0), default=None)
+                    if best and best.get("tx_count", 0) >= 2:
+                        search_type = "community"
+                        community_name = best["name"]
+                        matched_community_name = community_name
+                        print(f"🏘️  建案模糊搜尋: {keyword} → {community_name} ({best['tx_count']} 筆)")
         except Exception as e:
             print(f"⚠️  com2address 查詢錯誤: {e}")
 
-    # ── Step 2: 嘗試 address2community（地址→建案）──
-    if search_type == "address" and not search_addresses:
+    # ── Step 2: 嘗試 address2community（輸入是地址時反查建案）──
+    if search_type == "address":
         try:
             a2c_result = addr2com_lookup(keyword)
             if a2c_result and isinstance(a2c_result, dict):
@@ -455,44 +527,28 @@ def api_search():
                         if isinstance(r, dict) and r.get("community"):
                             best_name = r["community"]
                             break
-
-                if best_name and com2addr_engine:
+                if best_name:
                     print(f"📍 地址→建案: {keyword} → {best_name}")
-                    try:
-                        com_result2 = com2addr_engine.query(best_name, top_n=3)
-                        if com_result2.get("found"):
-                            search_type = "address_to_community"
-                            community_name = com_result2.get("matched_name", best_name)
-                            raw_addrs2 = com_result2.get("address_range", {}).get("raw_addresses", [])
-                            if raw_addrs2:
-                                search_addresses = raw_addrs2
-                                print(f"   → 建案地址: {len(search_addresses)} 個")
-                    except Exception as e2:
-                        print(f"   ⚠️  反查地址失敗: {e2}")
+                    community_name = best_name
+                    matched_community_name = best_name
+                    search_type = "address_to_community"
         except Exception as e:
             print(f"⚠️  address2community 查詢錯誤: {e}")
 
-    # ── Step 3: 用 address_search 搜尋房價 ──
+    # ── Step 3: 搜尋房價 ──
     all_transactions = []
 
-    if search_addresses:
-        seen_ids = set()
-        for addr in search_addresses[:30]:
-            try:
-                result = search_address(
-                    addr, db_path=DB_PATH,
-                    filters=filters, sort_by=sort_by,
-                    limit=100, show_sql=False
-                )
-                for row in result.get("results", []):
-                    row_id = row.get("id")
-                    if row_id and row_id not in seen_ids:
-                        seen_ids.add(row_id)
-                        all_transactions.append(format_tx_row(row))
-            except Exception as e:
-                print(f"  ⚠️  搜尋 {addr} 失敗: {e}")
+    # 若有建案名稱，直接用 community_name 查 DB（最快、最準確）
+    if matched_community_name:
+        try:
+            all_transactions = _search_by_community_name(
+                matched_community_name, filters=filters, limit=limit
+            )
+            print(f"   → community_name 直查: {len(all_transactions)} 筆")
+        except Exception as e:
+            print(f"  ⚠️  community 直查失敗: {e}")
 
-    # fallback: 直接用關鍵字搜
+    # fallback: 直接用關鍵字搜 address_match
     if not all_transactions:
         try:
             result = search_address(
@@ -583,80 +639,18 @@ def api_search_area():
 
         # 建立基礎 SQL
         where_clauses = [
-            "lat >= ? AND lat <= ?",
-            "lng >= ? AND lng <= ?",
+            "lat BETWEEN ? AND ?",
+            "lng BETWEEN ? AND ?",
             "lat IS NOT NULL",
             "lng IS NOT NULL",
         ]
         params = [south, north, west, east]
 
-        # 套用篩選條件
-        if filters.get("building_types"):
-            placeholders = ",".join(["?"] * len(filters["building_types"]))
-            where_clauses.append(f"building_type IN ({placeholders})")
-            params.extend(filters["building_types"])
-
-        if filters.get("rooms"):
-            placeholders = ",".join(["?"] * len(filters["rooms"]))
-            where_clauses.append(f"rooms IN ({placeholders})")
-            params.extend(filters["rooms"])
-
-        if filters.get("public_ratio_min") is not None or filters.get("public_ratio_max") is not None:
-            where_clauses.append("building_area > 0 AND main_area > 0")
-            pr_expr = "CAST((building_area - main_area - COALESCE(attached_area,0) - COALESCE(balcony_area,0)) * 100.0 / building_area AS REAL)"
-            if filters.get("public_ratio_min") is not None:
-                where_clauses.append(f"{pr_expr} >= ?")
-                params.append(float(filters["public_ratio_min"]))
-            if filters.get("public_ratio_max") is not None:
-                where_clauses.append(f"{pr_expr} <= ?")
-                params.append(float(filters["public_ratio_max"]))
-
-        if filters.get("year_min") is not None:
-            where_clauses.append("CAST(SUBSTR(transaction_date, 1, 3) AS INTEGER) >= ?")
-            params.append(int(filters["year_min"]))
-
-        if filters.get("year_max") is not None:
-            where_clauses.append("CAST(SUBSTR(transaction_date, 1, 3) AS INTEGER) <= ?")
-            params.append(int(filters["year_max"]))
-
-        if filters.get("ping_min") is not None:
-            where_clauses.append("building_area >= ?")
-            params.append(float(filters["ping_min"]) * PING_TO_SQM)
-
-        if filters.get("ping_max") is not None:
-            where_clauses.append("building_area <= ?")
-            params.append(float(filters["ping_max"]) * PING_TO_SQM)
-
-        if filters.get("unit_price_min") is not None:
-            where_clauses.append("unit_price >= ?")
-            params.append(float(filters["unit_price_min"]) * 10000 / PING_TO_SQM)
-
-        if filters.get("unit_price_max") is not None:
-            where_clauses.append("unit_price <= ?")
-            params.append(float(filters["unit_price_max"]) * 10000 / PING_TO_SQM)
-
-        if filters.get("price_min") is not None:
-            where_clauses.append("total_price >= ?")
-            params.append(float(filters["price_min"]) * 10000)
-
-        if filters.get("price_max") is not None:
-            where_clauses.append("total_price <= ?")
-            params.append(float(filters["price_max"]) * 10000)
+        # 共用篩選子句
+        where_clauses.extend(_build_filter_where(filters, params))
 
         where_sql = " AND ".join(where_clauses)
-        sql = f"""
-            SELECT id, district, address, transaction_date, total_price, unit_price,
-                   building_area AS building_area_sqm, main_area AS main_building_area,
-                   attached_area, balcony_area, rooms, halls, bathrooms,
-                   floor_level, total_floors, building_type, main_use, main_material,
-                   build_date AS completion_date, elevator, has_management,
-                   parking_type, parking_price, parking_area AS parking_area_sqm,
-                   note, lat, lng, community_name
-            FROM land_transaction
-            WHERE {where_sql}
-            ORDER BY transaction_date DESC
-            LIMIT ?
-        """
+        sql = f"SELECT {SELECT_COLS} FROM land_transaction WHERE {where_sql} ORDER BY transaction_date DESC LIMIT ?"
         params.append(limit)
 
         cursor.execute(sql, params)

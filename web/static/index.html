@@ -416,19 +416,21 @@ function initMap(){
       else if(count >= 30) dim = 52;
       else if(count >= 10) dim = 46;
 
-      // 叢集平均單價 (萬/坪)
+      // 叢集平均總價
       const markers = cluster.getAllChildMarkers();
-      let totalUp = 0, validCount = 0;
+      let totalPrice = 0, validCount = 0;
       markers.forEach(m => {
-        if(m._txUnitPrice && m._txUnitPrice > 0){ totalUp += m._txUnitPrice; validCount++; }
+        if(m._txPrice && m._txPrice > 0){ totalPrice += m._txPrice; validCount++; }
       });
-      const avgUpWan = validCount > 0 ? (totalUp / validCount / 10000) : 0; // 萬/坪
-      let priceLabel = avgUpWan > 0 ? avgUpWan.toFixed(0)+'萬' : '';
+      const avgWan = validCount > 0 ? (totalPrice / validCount / 10000) : 0; // 萬
+      let priceLabel = '';
+      if(avgWan >= 10000) priceLabel = (avgWan/10000).toFixed(1)+'億';
+      else if(avgWan >= 1) priceLabel = avgWan.toFixed(0)+'萬';
 
       let color = '#1a73e8';
-      if(avgUpWan > 100) color = '#ea4335';
-      else if(avgUpWan > 50) color = '#f9ab00';
-      else if(avgUpWan > 0) color = '#34a853';
+      if(avgWan > 4000) color = '#ea4335';
+      else if(avgWan > 2000) color = '#f9ab00';
+      else if(avgWan > 0) color = '#34a853';
 
       return L.divIcon({
         html: `<div style="
@@ -437,7 +439,7 @@ function initMap(){
           border-radius:50%;color:#fff;font-weight:700;font-size:11px;
           text-shadow:0 1px 2px rgba(0,0,0,.3);box-shadow:0 2px 8px rgba(0,0,0,.25);
           line-height:1.2;cursor:pointer;
-        ">${count}筆<br><span style="font-size:9px">${priceLabel}/坪</span></div>`,
+        ">${count}筆<br><span style="font-size:9px">${priceLabel}</span></div>`,
         className: 'price-marker',
         iconSize: [dim, dim]
       });
@@ -917,28 +919,27 @@ function plotMarkers(fitBounds = true){
   txData.forEach((tx, i) => {
     if(!tx.lat || !tx.lng) return;
 
-    const upPing = tx.unit_price_ping || 0;
-    const upWan = upPing / 10000; // 萬/坪
+    const priceWan = (tx.price || 0) / 10000;
     let color = '#888';
-    if(upPing > 0){
-      if(upWan > 100) color = '#ea4335';
-      else if(upWan > 50) color = '#f9ab00';
+    if(tx.price > 0){
+      if(priceWan > 4000) color = '#ea4335';
+      else if(priceWan > 2000) color = '#f9ab00';
       else color = '#34a853';
     }
 
-    // 地圖 marker 顯示單價/坪
-    const priceText = upPing > 0
-      ? upWan.toFixed(0) + '萬'
-      : (tx.price > 0 ? (tx.price/10000).toFixed(0)+'萬' : '-');
+    // 地圖 marker 顯示總價
+    const priceText = tx.price >= 100000000
+      ? (tx.price / 100000000).toFixed(1) + '億'
+      : priceWan >= 1 ? priceWan.toFixed(0) + '萬' : '-';
 
     const markerHtml = `<div style="
-      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      display:flex;align-items:center;justify-content:center;
       width:46px;height:46px;background:${color};
       border:2px solid white;border-radius:50%;
-      font-size:10px;font-weight:bold;color:white;
+      font-size:11px;font-weight:bold;color:white;
       text-shadow:0 1px 2px rgba(0,0,0,.3);
-      box-shadow:0 2px 6px rgba(0,0,0,.2);line-height:1.2;
-    ">${priceText}<span style="font-size:8px;opacity:.85">/坪</span></div>`;
+      box-shadow:0 2px 6px rgba(0,0,0,.2);
+    ">${priceText}</div>`;
 
     const marker = L.marker([tx.lat, tx.lng], {
       icon: L.divIcon({html: markerHtml, iconSize:[46,46], className:'price-marker'})
@@ -1009,10 +1010,10 @@ function addLegend(){
     const div = L.DomUtil.create('div','');
     div.innerHTML = `
       <div style="background:#fff;padding:10px 12px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.15);font-size:12px;line-height:1.8">
-        <div style="font-weight:700;margin-bottom:4px">單價 (萬/坪)</div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#34a853;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>≤ 50萬/坪</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#f9ab00;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>50~100萬/坪</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#ea4335;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>&gt; 100萬/坪</span></div>
+        <div style="font-weight:700;margin-bottom:4px">總價區間</div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#34a853;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>≤ 2000萬</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#f9ab00;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>2000~4000萬</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#ea4335;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>&gt; 4000萬</span></div>
       </div>`;
     L.DomEvent.disableScrollPropagation(div);
     L.DomEvent.disableClickPropagation(div);
