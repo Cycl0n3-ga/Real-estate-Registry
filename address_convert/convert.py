@@ -859,10 +859,11 @@ class LandDataDB:
                         log_print(f'    [重複] id={existing_id} key={dedup_key}: {rec.get("address", "")}')
                         self._verbose_count['duplicated'] += 1
             else:
-                # Bloom false positive → 插入
+                # Bloom false positive → 插入，同時補加入 bloom 避免後續批次重複插入
                 values = tuple(rec.get(col) for col in LAND_COLUMNS)
                 false_positive_inserts.append((*values, dedup_key))
                 self._batch_keys.add(dedup_key)
+                self._bloom.add(dedup_key)  # 補齊：FP 插入後必須加入 bloom
                 stats['inserted'] += 1
 
         if false_positive_inserts:
@@ -898,9 +899,10 @@ class LandDataDB:
                         log_print(f'    [重複] id={existing_id} key={dedup_key}: {tup[2] or ""}')
                         self._verbose_count['duplicated'] += 1
             else:
-                # Bloom false positive → 插入
+                # Bloom false positive → 插入，同時補加入 bloom 避免後續批次重複插入
                 false_positive_inserts.append(tup)
                 self._batch_keys.add(dedup_key)
+                self._bloom.add(dedup_key)  # 補齊：FP 插入後必須加入 bloom
                 stats['inserted'] += 1
 
         if false_positive_inserts:
