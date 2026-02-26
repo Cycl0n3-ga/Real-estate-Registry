@@ -1039,7 +1039,7 @@ class OSMIndexProvider:
         if db_path is None:
             db_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
-                '..', '..', 'db', 'osm_addresses.db'
+                '..', 'db', 'osm_addresses.db'
             )
         self.db_path = db_path
         self._available = os.path.exists(db_path)

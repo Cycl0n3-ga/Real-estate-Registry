@@ -192,6 +192,7 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 .cluster-analysis .ca-communities{margin-top:6px;padding-top:6px;border-top:1px solid #dde4f0;}
 .cluster-analysis .ca-community-item{display:flex;justify-content:space-between;padding:2px 0;}
 .special-badge{display:inline-block;background:#ffebee;color:#c62828;padding:1px 5px;border-radius:6px;font-size:9px;font-weight:600;margin-left:4px;}
+.group-badge{display:inline-block;background:#e3f2fd;color:#1565c0;border-radius:12px;padding:1px 7px;font-size:10px;font-weight:600;margin-left:4px;}
 
 .tx-addr{
   grid-column:1;font-size:13px;font-weight:700;color:var(--text);
@@ -434,26 +435,34 @@ function initMap(){
   }).addTo(map);
 
   markerClusterGroup = L.markerClusterGroup({
-    maxClusterRadius: 60,
-    disableClusteringAtZoom: 19,
-    spiderfyOnMaxZoom: true,
+    maxClusterRadius: 55,
+    disableClusteringAtZoom: 18,
+    spiderfyOnMaxZoom: false,
     showCoverageOnHover: false,
     zoomToBoundsOnClick: true,
-    spiderfyDistanceMultiplier: 2.5,
     iconCreateFunction: function(cluster) {
-      const count = cluster.getChildCount();
-      let dim = 42;
-      if(count >= 100) dim = 58;
-      else if(count >= 30) dim = 52;
-      else if(count >= 10) dim = 46;
-
-      // 叢集平均總價與單價
       const markers = cluster.getAllChildMarkers();
+      // 計算真正交易筆數（每個 leaf 可能代表一群）
+      let totalCount = 0;
       let totalPrice = 0, totalUnit = 0, validP = 0, validU = 0;
       markers.forEach(m => {
-        if(m._txPrice && m._txPrice > 0){ totalPrice += m._txPrice; validP++; }
-        if(m._txUnitPrice && m._txUnitPrice > 0){ totalUnit += m._txUnitPrice; validU++; }
+        const gc = m._groupCount || 1;
+        totalCount += gc;
+        if(m._avgPrice && m._avgPrice > 0){ totalPrice += m._avgPrice * gc; validP += gc; }
+        if(m._avgUnitPrice && m._avgUnitPrice > 0){ totalUnit += m._avgUnitPrice * gc; validU += gc; }
       });
+
+      // 檢查是否全部同一社區
+      const labels = markers.map(m => m._groupLabel).filter(Boolean);
+      const uniqueLabels = [...new Set(labels)];
+      const sameComm = uniqueLabels.length === 1;
+      const commLabel = sameComm ? uniqueLabels[0].substring(0, 6) : '';
+
+      let dim = 42;
+      if(totalCount >= 100) dim = 58;
+      else if(totalCount >= 30) dim = 52;
+      else if(totalCount >= 10) dim = 46;
+
       const avgWan = validP > 0 ? (totalPrice / validP / 10000) : 0;
       const avgUnitWan = validU > 0 ? (totalUnit / validU / 10000) : 0;
 
@@ -461,46 +470,40 @@ function initMap(){
       if(avgWan >= 10000) priceLabel = (avgWan/10000).toFixed(1)+'億';
       else if(avgWan >= 1) priceLabel = avgWan.toFixed(0)+'萬';
 
-      // 雙色：內部=平均總價色，邊框=平均單價色
       let innerColor = '#1a73e8';
-      if(avgWan >= 4000) innerColor = '#c62828';
-      else if(avgWan >= 2000) innerColor = '#ea4335';
-      else if(avgWan >= 1000) innerColor = '#f9ab00';
-      else if(avgWan > 0) innerColor = '#34a853';
+      if(avgUnitWan >= 70) innerColor = '#b71c1c';
+      else if(avgUnitWan >= 40) innerColor = '#e65100';
+      else if(avgUnitWan >= 20) innerColor = '#f57f17';
+      else if(avgUnitWan > 0) innerColor = '#1b5e20';
 
-      let outerColor = '#fff';
-      if(avgUnitWan >= 70) outerColor = '#b71c1c';
-      else if(avgUnitWan >= 40) outerColor = '#e65100';
-      else if(avgUnitWan >= 20) outerColor = '#f57f17';
-      else if(avgUnitWan > 0) outerColor = '#1b5e20';
+      const labelHtml = commLabel
+        ? `<div style="margin-top:-2px;padding:1px 4px;background:rgba(255,255,255,.92);border-radius:6px;font-size:8px;font-weight:600;color:#333;white-space:nowrap;max-width:70px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08);">${commLabel}</div>`
+        : '';
 
+      const totalH = commLabel ? dim + 14 : dim;
       return L.divIcon({
-        html: `<div style="
-          display:flex;flex-direction:column;align-items:center;justify-content:center;
-          width:${dim}px;height:${dim}px;background:${innerColor};border:4px solid ${outerColor};
-          border-radius:50%;color:#fff;font-weight:700;font-size:11px;
-          text-shadow:0 1px 2px rgba(0,0,0,.3);box-shadow:0 2px 8px rgba(0,0,0,.25);
-          line-height:1.2;cursor:pointer;
-        ">${count}筆<br><span style="font-size:9px">${priceLabel}</span></div>`,
+        html: `<div style="display:flex;flex-direction:column;align-items:center;">
+          <div style="display:flex;align-items:center;justify-content:center;width:${dim}px;height:${dim}px;background:${innerColor};border:3px solid #fff;border-radius:50%;color:#fff;font-weight:700;font-size:11px;text-shadow:0 1px 2px rgba(0,0,0,.3);box-shadow:0 2px 8px rgba(0,0,0,.25);line-height:1.2;cursor:pointer;">${totalCount}筆${priceLabel ? '<br><span style="font-size:9px">'+priceLabel+'</span>' : ''}</div>
+          ${labelHtml}</div>`,
         className: 'price-marker',
-        iconSize: [dim, dim]
+        iconSize: [dim + 8, totalH],
+        iconAnchor: [(dim+8)/2, totalH/2]
       });
     }
   });
   map.addLayer(markerClusterGroup);
   markerGroup = markerClusterGroup;
 
-  // 叢集點擊：高縮放或密集時在側欄顯示列表
+  // 叢集/群組點擊 → 側欄列表
   markerClusterGroup.on('clusterclick', function(e){
     const zoom = map.getZoom();
-    const count = e.layer.getChildCount();
-    if(zoom >= 16 || count >= 6){
-      const mkrs = e.layer.getAllChildMarkers();
-      const items = mkrs
-        .filter(m => typeof m._txIdx !== 'undefined' && txData[m._txIdx])
-        .map(m => ({tx: txData[m._txIdx], origIdx: m._txIdx}));
-      if(items.length > 0) showClusterList(items);
-    }
+    const mkrs = e.layer.getAllChildMarkers();
+    // 收集所有交易
+    const items = [];
+    mkrs.forEach(m => {
+      if(m._groupItems) items.push(...m._groupItems);
+    });
+    if(items.length > 0) showClusterList(items);
   });
 
   addLegend();
@@ -971,119 +974,151 @@ function renderSummary(){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 地圖 marker
+// 地圖 marker — 建案/地址群組化
 // ═══════════════════════════════════════════════════════════════
+
+// 把地址的樓層資訊去掉，取「棟」的 key
+function baseAddress(addr){
+  if(!addr) return '';
+  return addr.replace(/\d+樓.*$/, '').replace(/\d+F.*$/i, '').replace(/地下.*$/, '');
+}
+
+function stripCityJS(addr){
+  if(!addr) return '';
+  return addr.replace(/^(?:(?:台|臺)(?:北|中|南|東)市|(?:新北|桃園|高雄|基隆|新竹|嘉義)[市縣]|.{2,3}縣)/, '');
+}
+
+/**
+ * 將 txData 分組：社區 > 同棟地址 > 座標接近
+ * 回傳: [{label, items:[{tx, origIdx}], lat, lng, avgPrice, avgUnitPrice}, ...]
+ */
+function buildGroups(){
+  const groups = {};
+  txData.forEach((tx, idx) => {
+    if(!tx.lat || !tx.lng) return;
+    let key;
+    if(tx.community_name){
+      key = 'c:' + tx.community_name;
+    } else {
+      key = 'a:' + baseAddress(tx.address_raw || tx.address);
+    }
+    if(!groups[key]){
+      groups[key] = {
+        label: tx.community_name || stripCityJS(baseAddress(tx.address)),
+        items: [], lats: [], lngs: [],
+        prices: [], unitPrices: [],
+      };
+    }
+    const g = groups[key];
+    g.items.push({tx, origIdx: idx});
+    g.lats.push(tx.lat);
+    g.lngs.push(tx.lng);
+    if(tx.price > 0) g.prices.push(tx.price);
+    if(tx.unit_price_ping > 0) g.unitPrices.push(tx.unit_price_ping);
+  });
+  return Object.values(groups);
+}
+
+function getUnitPriceColor(wan){
+  if(wan <= 0) return '#888';
+  if(wan >= 70) return '#b71c1c';
+  if(wan >= 40) return '#e65100';
+  if(wan >= 20) return '#f57f17';
+  return '#1b5e20';
+}
+
 function plotMarkers(fitBounds = true){
   markerClusterGroup.clearLayers();
   const boundsArr = [];
+  const groups = buildGroups();
 
-  // ── 重疊偵測：相同座標的 marker 做微小偏移 ──
-  const coordCounts = {};
-  txData.forEach((tx, i) => {
-    if(!tx.lat || !tx.lng) return;
-    const key = tx.lat.toFixed(6) + ',' + tx.lng.toFixed(6);
-    if(!coordCounts[key]) coordCounts[key] = [];
-    coordCounts[key].push(i);
-  });
+  groups.forEach(g => {
+    const n = g.items.length;
+    // 群組中心: 中位數座標（比平均不受極端值影響）
+    const sortedLats = g.lats.slice().sort((a,b)=>a-b);
+    const sortedLngs = g.lngs.slice().sort((a,b)=>a-b);
+    const mid = Math.floor(sortedLats.length / 2);
+    const lat = sortedLats[mid];
+    const lng = sortedLngs[mid];
 
-  // 為重疊的 marker 計算偏移（圓形排列）
-  const offsetMap = {};
-  Object.values(coordCounts).forEach(indices => {
-    if(indices.length <= 1) return;
-    const n = indices.length;
-    const radius = 0.00008; // ~8m
-    indices.forEach((idx, j) => {
-      const angle = (2 * Math.PI * j) / n;
-      offsetMap[idx] = {
-        dlat: radius * Math.cos(angle),
-        dlng: radius * Math.sin(angle)
-      };
-    });
-  });
+    const avgPrice = g.prices.length ? g.prices.reduce((a,b)=>a+b,0)/g.prices.length : 0;
+    const avgUnitPrice = g.unitPrices.length ? g.unitPrices.reduce((a,b)=>a+b,0)/g.unitPrices.length : 0;
+    const avgUnitWan = avgUnitPrice / 10000;
+    const avgPriceWan = avgPrice / 10000;
 
-  // 顏色映射函數
-  function getTotalPriceColor(price){
-    const wan = (price||0) / 10000;
-    if(wan <= 0) return '#888';
-    if(wan >= 4000) return '#c62828';  // 深紅 > 4000萬
-    if(wan >= 2000) return '#ea4335';  // 紅 2000-4000萬
-    if(wan >= 1000) return '#f9ab00';  // 橘 1000-2000萬
-    return '#34a853';                  // 綠 < 1000萬
-  }
-  function getUnitPriceColor(unitPricePing){
-    const wan = (unitPricePing||0) / 10000;
-    if(wan <= 0) return '#888';
-    if(wan >= 70) return '#b71c1c';    // 深紅 > 70萬/坪
-    if(wan >= 40) return '#e65100';    // 深橘 40-70萬/坪
-    if(wan >= 20) return '#f57f17';    // 橘黃 20-40萬/坪
-    return '#1b5e20';                  // 深綠 < 20萬/坪
-  }
+    const innerColor = getUnitPriceColor(avgUnitWan);
+    const label = g.label ? g.label.substring(0, 8) : '';
 
-  txData.forEach((tx, i) => {
-    if(!tx.lat || !tx.lng) return;
+    if(n === 1){
+      // ─── 單筆：直接顯示價格 ───
+      const tx = g.items[0].tx;
+      const origIdx = g.items[0].origIdx;
+      const priceWan = (tx.price||0)/10000;
+      let priceText;
+      if(priceWan >= 10000) priceText = (priceWan/10000).toFixed(1)+'億';
+      else if(priceWan >= 1) priceText = priceWan.toFixed(0)+'萬';
+      else priceText = '-';
 
-    // 套用重疊偏移
-    let lat = tx.lat, lng = tx.lng;
-    if(offsetMap[i]){
-      lat += offsetMap[i].dlat;
-      lng += offsetMap[i].dlng;
+      const unitColor = getUnitPriceColor((tx.unit_price_ping||0)/10000);
+      const sz = 40;
+      const labelHtml = label
+        ? `<div style="margin-top:-2px;padding:1px 4px;background:rgba(255,255,255,.92);border-radius:6px;font-size:8px;font-weight:600;color:#333;white-space:nowrap;max-width:65px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08);">${escHtml(label)}</div>` : '';
+      const totalH = label ? sz + 14 : sz;
+
+      const marker = L.marker([lat, lng], {
+        icon: L.divIcon({
+          html: `<div style="display:flex;flex-direction:column;align-items:center;">
+            <div style="display:flex;align-items:center;justify-content:center;width:${sz}px;height:${sz}px;background:${unitColor};border:3px solid #fff;border-radius:50%;font-size:10px;font-weight:bold;color:white;text-shadow:0 1px 2px rgba(0,0,0,.4);box-shadow:0 2px 6px rgba(0,0,0,.25);line-height:1.1;">${priceText}</div>
+            ${labelHtml}</div>`,
+          iconSize: [sz+8, totalH], iconAnchor:[(sz+8)/2, totalH/2], className:'price-marker'
+        })
+      });
+      marker._groupCount = 1;
+      marker._avgPrice = tx.price;
+      marker._avgUnitPrice = tx.unit_price_ping;
+      marker._groupLabel = g.label;
+      marker._groupItems = g.items;
+      marker.bindPopup(makePopup(tx), {maxWidth:320});
+      marker.on('click', () => {
+        activeCardIdx = origIdx;
+        renderResults();
+        const card = document.querySelector(`.tx-card[data-idx="${origIdx}"]`);
+        if(card) card.scrollIntoView({behavior:'smooth', block:'center'});
+      });
+      markerClusterGroup.addLayer(marker);
+      boundsArr.push([lat, lng]);
+    } else {
+      // ─── 多筆：群組 marker ───
+      let priceText;
+      if(avgPriceWan >= 10000) priceText = (avgPriceWan/10000).toFixed(1)+'億';
+      else if(avgPriceWan >= 1) priceText = Math.round(avgPriceWan)+'萬';
+      else priceText = '';
+
+      const sz = n >= 20 ? 54 : (n >= 5 ? 48 : 42);
+      const labelHtml = label
+        ? `<div style="margin-top:-2px;padding:1px 5px;background:rgba(255,255,255,.95);border-radius:6px;font-size:9px;font-weight:700;color:#333;white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08);">${escHtml(label)}</div>` : '';
+      const totalH = label ? sz + 15 : sz;
+
+      const marker = L.marker([lat, lng], {
+        icon: L.divIcon({
+          html: `<div style="display:flex;flex-direction:column;align-items:center;">
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:${sz}px;height:${sz}px;background:${innerColor};border:3px solid #fff;border-radius:50%;color:#fff;font-weight:700;font-size:12px;text-shadow:0 1px 2px rgba(0,0,0,.3);box-shadow:0 2px 8px rgba(0,0,0,.25);line-height:1.15;cursor:pointer;">${n}筆${priceText ? '<br><span style="font-size:8px">均'+priceText+'</span>' : ''}</div>
+            ${labelHtml}</div>`,
+          iconSize: [sz+8, totalH], iconAnchor:[(sz+8)/2, totalH/2], className:'price-marker'
+        })
+      });
+      marker._groupCount = n;
+      marker._avgPrice = avgPrice;
+      marker._avgUnitPrice = avgUnitPrice;
+      marker._groupLabel = g.label;
+      marker._groupItems = g.items;
+      // 點擊群組 marker → 側欄列表
+      marker.on('click', () => {
+        showClusterList(g.items);
+      });
+      markerClusterGroup.addLayer(marker);
+      boundsArr.push([lat, lng]);
     }
-
-    const innerColor = getTotalPriceColor(tx.price);
-    const outerColor = getUnitPriceColor(tx.unit_price_ping);
-
-    // 總價文字
-    const priceWan = (tx.price || 0) / 10000;
-    let priceText;
-    if(priceWan >= 10000) priceText = (priceWan/10000).toFixed(1) + '億';
-    else if(priceWan >= 1) priceText = priceWan.toFixed(0) + '萬';
-    else priceText = '-';
-
-    // 社區名標籤（截斷到 6 字）
-    const cn = tx.community_name || '';
-    const comLabel = cn ? cn.substring(0, 6) : '';
-
-    // 雙色環形 marker：內部=總價色，外框=單價色
-    const markerSize = comLabel ? 50 : 44;
-    const markerHtml = `<div style="display:flex;flex-direction:column;align-items:center;">
-      <div style="
-        display:flex;align-items:center;justify-content:center;
-        width:${markerSize}px;height:${markerSize}px;
-        background:${innerColor};
-        border:4px solid ${outerColor};
-        border-radius:50%;
-        font-size:${priceWan >= 10000 ? 9 : 10}px;font-weight:bold;color:white;
-        text-shadow:0 1px 2px rgba(0,0,0,.4);
-        box-shadow:0 2px 6px rgba(0,0,0,.25);
-        line-height:1.1;
-      ">${priceText}</div>
-      ${comLabel ? `<div style="
-        margin-top:-2px;padding:1px 4px;
-        background:rgba(255,255,255,.92);border-radius:6px;
-        font-size:8px;font-weight:600;color:#333;
-        white-space:nowrap;max-width:60px;overflow:hidden;text-overflow:ellipsis;
-        box-shadow:0 1px 3px rgba(0,0,0,.15);
-        border:1px solid rgba(0,0,0,.08);
-      ">${comLabel}</div>` : ''}
-    </div>`;
-
-    const totalH = comLabel ? markerSize + 14 : markerSize;
-    const marker = L.marker([lat, lng], {
-      icon: L.divIcon({html: markerHtml, iconSize:[markerSize + 8, totalH], iconAnchor:[(markerSize+8)/2, totalH/2], className:'price-marker'})
-    });
-    marker._txPrice = tx.price;
-    marker._txUnitPrice = tx.unit_price_ping;
-    marker._txIdx = i;
-    marker.bindPopup(makePopup(tx), {maxWidth:320});
-    marker.on('click', () => {
-      activeCardIdx = i;
-      renderResults();
-      const card = document.querySelector(`.tx-card[data-idx="${i}"]`);
-      if(card) card.scrollIntoView({behavior:'smooth', block:'center'});
-    });
-
-    markerClusterGroup.addLayer(marker);
-    boundsArr.push([lat, lng]);
   });
 
   if(fitBounds && boundsArr.length > 0){
@@ -1105,6 +1140,7 @@ function makePopup(tx){
     ${tx.floor?'｜ '+tx.floor+'F/'+tx.total_floors+'F':''}
     ${tx.public_ratio>0?'｜ 公設'+tx.public_ratio+'%':''}
     ${tx.building_type?'<br>'+escHtml(tx.building_type):''}
+    ${tx.has_parking?'<br>🚗 含車位 '+fmtWan(tx.parking_price):''}
     ${tx.note?'<br><span style="color:#888;font-size:11px">'+escHtml(tx.note)+'</span>':''}
   </div>`;
 }
@@ -1118,10 +1154,11 @@ function selectTx(idx){
   const tx = txData[idx];
   if(tx && tx.lat && tx.lng){
     map.setView([tx.lat, tx.lng], 17);
+    // 找到包含此交易的群組 marker
     markerClusterGroup.eachLayer(layer => {
-      if(layer._txIdx === idx){
+      if(layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)){
         markerClusterGroup.zoomToShowLayer(layer, () => {
-          layer.openPopup();
+          if(layer._groupItems.length === 1) layer.openPopup();
         });
       }
     });
@@ -1137,16 +1174,12 @@ function addLegend(){
     const div = L.DomUtil.create('div','');
     div.innerHTML = `
       <div style="background:#fff;padding:10px 12px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.15);font-size:11px;line-height:1.8;min-width:140px">
-        <div style="font-weight:700;margin-bottom:4px;font-size:12px">🎯 圓心＝總價</div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#34a853;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>＜1000萬</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#f9ab00;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>1000~2000萬</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#ea4335;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>2000~4000萬</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#c62828;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>＞4000萬</span></div>
-        <div style="font-weight:700;margin:6px 0 4px;font-size:12px">💍 外環＝單價/坪</div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #1b5e20"></div><span>＜20萬</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #f57f17"></div><span>20~40萬</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #e65100"></div><span>40~70萬</span></div>
-        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid #b71c1c"></div><span>＞70萬</span></div>
+        <div style="font-weight:700;margin-bottom:4px;font-size:12px">🎯 圓圈＝單價/坪</div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#1b5e20;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>＜20萬</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#f57f17;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>20~40萬</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#e65100;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>40~70萬</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#b71c1c;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>＞70萬</span></div>
+        <div style="font-weight:700;margin-top:6px;font-size:11px;color:#666">💡 同建案/地址自動合併</div>
       </div>`;
     L.DomEvent.disableScrollPropagation(div);
     L.DomEvent.disableClickPropagation(div);

@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 """
-良富居地產 v4.0 — 後端 API 伺服器
+良富居地產 v4.2 — 後端 API 伺服器
 整合 address_match、com2address、address2com、OSM geocoding
 使用 Flask + SQLite (land_data.db)
 
-v4 改動:
-- OSM 優先定位（離線快速），fallback DB 座標，否則放棄
-- 絕不使用行政區座標、絕不使用偏移
-- 搜尋欄同時做 com2address + address2com+address_match
-- 地址正規化顯示
-- 交易備忘錄（note）欄位恢復
-- 位置模式切換：精確(OSM) / 建案(DB)
+v4.2 改動:
+- OSM 批次定位加速（直接 osm_index.batch_geocode，~100x 提升）
+- 建案/地址群組化 marker（同建案合併、不再 spider）
+- 地址去縣市前綴、修正重複行政區
+- 特殊交易過濾 + 車位顯示 + 行政區後過濾
+- 模組化: data_utils.py 抽出資料格式化與統計
 """
 
 import os
 import sys
 import re
-import json
 import time
 import math
 import threading
@@ -34,27 +32,22 @@ ADDR2COM_DIR = LAND_DIR / "address2com"
 GEODECODING_DIR = LAND_DIR / "geodecoding"
 
 # 將模組路徑加入 sys.path
-for p in [str(ADDR_MATCH_DIR), str(COM2ADDR_DIR), str(ADDR2COM_DIR),
-          str(GEODECODING_DIR), str(LAND_DIR)]:
+for p in [str(BASE_DIR), str(ADDR_MATCH_DIR), str(COM2ADDR_DIR),
+          str(ADDR2COM_DIR), str(GEODECODING_DIR), str(LAND_DIR)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-# 匯入模組
+# ── 匯入模組 ─────────────────────────────────────────────────────────────────
 from address_match import search_address, parse_range, SORT_OPTIONS
 from address_utils import fullwidth_to_halfwidth, normalize_address, parse_query
 from community2address import Community2AddressLookup
 from address2community import lookup as addr2com_lookup
 from geocoder import TaiwanGeocoder
-
-# 特殊交易關鍵字（用於 note 欄位判斷）
-SPECIAL_TX_KEYWORDS = [
-    '親友', '員工', '共有人', '特殊關係', '利害關係',
-    '調協', '欻欄', '法拍', '濟助', '社會住宅',
-    '总價顯著偏低', '價格顯著偏高',
-    '政府機關', '建商與地主',
-    '債權債務', '繼承',
-    '急買急賣', '受債權人',
-]
+from data_utils import (
+    clean_nan, format_roc_date, strip_city, is_special_transaction,
+    format_tx_row, compute_summary, build_community_summaries,
+    batch_osm_geocode, PING_TO_SQM,
+)
 
 # ── Flask 設定 ────────────────────────────────────────────────────────────────
 app = Flask(__name__, static_folder="static")
@@ -83,7 +76,6 @@ def handle_exception(error):
     return jsonify({"success": False, "error": f"錯誤: {str(error)}"}), 500
 
 DB_PATH = str(LAND_DIR / "db" / "land_data.db")
-PING_TO_SQM = 3.30579
 
 # ── 全域資料 ──────────────────────────────────────────────────────────────────
 com2addr_engine = None
@@ -145,32 +137,7 @@ def init_geocoder():
         geocoder_ready = True
 
 
-# ── 工具函式 ──────────────────────────────────────────────────────────────────
-
-def clean_nan(obj):
-    """遞迴清理 NaN/Infinity"""
-    if isinstance(obj, dict):
-        return {k: clean_nan(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [clean_nan(i) for i in obj]
-    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
-        return 0
-    return obj
-
-
-def format_roc_date(roc_date):
-    """民國日期 (1130101) → 西元 (2024/01/01)"""
-    if not roc_date:
-        return None
-    ds = str(roc_date).strip()
-    if len(ds) < 7:
-        return None
-    try:
-        y = int(ds[:3]) + 1911
-        return f"{y}/{ds[3:5]}/{ds[5:7]}"
-    except Exception:
-        return None
-
+# ── 工具函式（本地專用，未移至 data_utils）─────────────────────────────────────
 
 def get_osm_coords(address: str, district: str = "") -> tuple:
     """
@@ -194,185 +161,6 @@ def get_osm_coords(address: str, district: str = "") -> tuple:
         pass
 
     return None, None
-
-
-def batch_osm_geocode(rows: list) -> dict:
-    """
-    批次 OSM 地理編碼——先找出唯一地址，批次查詢一次，再映射回所有交易
-    大幅提升精確位置模式的速度
-
-    Returns: {address_raw: (lat, lng), ...}
-    """
-    if not geocoder_ready or geocoder_engine is None:
-        return {}
-
-    # 収集唯一地址
-    unique_addrs = {}
-    for r in rows:
-        addr = str(r.get('address', '') or '')
-        district = str(r.get('district', '') or '')
-        if addr and addr not in unique_addrs:
-            unique_addrs[addr] = district
-
-    if not unique_addrs:
-        return {}
-
-    t0 = time.time()
-    results = {}
-    for addr, district in unique_addrs.items():
-        lat, lng = get_osm_coords(addr, district)
-        if lat and lng:
-            results[addr] = (lat, lng)
-
-    elapsed = time.time() - t0
-    print(f"📍 OSM 批次定位: {len(unique_addrs)} 個唯一地址 → {len(results)} 個命中 ({elapsed:.2f}s)")
-    return results
-
-
-def is_special_transaction(note: str) -> bool:
-    """判斷是否為特殊交易（根據備忘錄）"""
-    if not note:
-        return False
-    for kw in SPECIAL_TX_KEYWORDS:
-        if kw in note:
-            return True
-    return False
-
-
-def format_tx_row(row: dict, location_mode: str = "osm", osm_cache: dict = None) -> dict:
-    """
-    將 address_search 回傳的 row 轉為前端友好格式
-
-    location_mode:
-      "osm"   - OSM 精確位置優先 → DB → 放棄
-      "db"    - DB 位置優先（建案平均座標）→ 放棄
-    osm_cache:
-      批次 OSM 定位結果 {address_raw: (lat, lng)}，避免逐筆查詢
-    """
-    total_price = row.get("total_price", 0) or 0
-    building_area = row.get("building_area_sqm", 0) or 0
-    unit_price = row.get("unit_price", 0) or 0
-    main_area = row.get("main_building_area", 0) or 0
-    attached = row.get("attached_area", 0) or 0
-    balcony = row.get("balcony_area", 0) or 0
-
-    ping = round(building_area / PING_TO_SQM, 2) if building_area else 0
-    unit_price_ping = round(unit_price * PING_TO_SQM, 2) if unit_price else 0
-
-    # 公設比
-    public_ratio = 0
-    if building_area > 0 and main_area > 0:
-        public_ratio = round(
-            (building_area - main_area - attached - balcony) / building_area * 100, 1
-        )
-        if public_ratio < 0:
-            public_ratio = 0
-
-    date_raw = str(row.get("transaction_date", "") or "")
-    floor_raw = str(row.get("floor_level", "") or "")
-    total_floors_raw = str(row.get("total_floors", "") or "")
-    district = str(row.get("district", "") or "")
-    address_raw = str(row.get("address", "") or "")
-    address_display = normalize_address(address_raw) if address_raw else ""
-    community_name_raw = str(row.get("community_name", "") or "")
-    note = str(row.get("note", "") or "")
-    special = is_special_transaction(note)
-
-    # 車位
-    parking_type_raw = str(row.get("parking_type", "") or "")
-    parking_price_raw = row.get("parking_price", 0) or 0
-    has_parking = bool(parking_type_raw and parking_type_raw != "無")
-
-    # ── 座標策略（絕不使用行政區、絕不偏移）──
-    lat = None
-    lng = None
-    coord_source = "none"
-
-    db_lat = row.get("lat")
-    db_lng = row.get("lng")
-    has_db = db_lat and db_lng and db_lat != 0 and db_lng != 0
-
-    if location_mode == "osm":
-        # 優先從批次快取取
-        if osm_cache and address_raw in osm_cache:
-            lat, lng = osm_cache[address_raw]
-            coord_source = "osm"
-        elif has_db:
-            lat, lng = db_lat, db_lng
-            coord_source = "db"
-        # 否則放棄
-    elif location_mode == "db":
-        # DB 位置優先（建案平均座標）
-        if has_db:
-            lat, lng = db_lat, db_lng
-            coord_source = "db"
-        elif community_name_raw and community_name_raw in _community_coords_cache:
-            lat, lng = _community_coords_cache[community_name_raw]
-            coord_source = "community"
-        # 否則放棄
-    else:
-        # 預設同 db（快速）
-        if has_db:
-            lat, lng = db_lat, db_lng
-            coord_source = "db"
-
-    return {
-        "address": address_display,
-        "address_raw": address_raw,
-        "district": district,
-        "date": format_roc_date(date_raw) or date_raw,
-        "date_raw": date_raw,
-        "price": total_price,
-        "unit_price_sqm": round(unit_price, 2),
-        "unit_price_ping": unit_price_ping,
-        "area_sqm": round(building_area, 2),
-        "area_ping": ping,
-        "main_area_sqm": round(main_area, 2),
-        "public_ratio": public_ratio,
-        "floor": floor_raw,
-        "total_floors": total_floors_raw,
-        "rooms": row.get("rooms", 0) or 0,
-        "halls": row.get("halls", 0) or 0,
-        "baths": row.get("bathrooms", 0) or 0,
-        "building_type": str(row.get("building_type", "") or ""),
-        "main_use": str(row.get("main_use", "") or ""),
-        "main_material": str(row.get("main_material", "") or ""),
-        "completion_date": str(row.get("completion_date", "") or ""),
-        "has_elevator": str(row.get("elevator", "") or ""),
-        "has_management": str(row.get("has_management", "") or ""),
-        "parking_type": str(row.get("parking_type", "") or ""),
-        "parking_price": row.get("parking_price", 0) or 0,
-        "parking_area_sqm": row.get("parking_area_sqm", 0) or 0,
-        "note": note,
-        "community_name": community_name_raw,
-        "is_special": special,
-        "has_parking": has_parking,
-        "lat": lat,
-        "lng": lng,
-        "coord_source": coord_source,
-    }
-
-
-def compute_summary(transactions: list) -> dict:
-    """計算統計摘要"""
-    if not transactions:
-        return {}
-    prices = [t["price"] for t in transactions if t.get("price", 0) > 0]
-    pings = [t["area_ping"] for t in transactions if t.get("area_ping", 0) > 0]
-    unit_prices = [t["unit_price_ping"] for t in transactions if t.get("unit_price_ping", 0) > 0]
-    ratios = [t["public_ratio"] for t in transactions if t.get("public_ratio", 0) > 0]
-
-    return {
-        "total": len(transactions),
-        "avg_price": round(sum(prices) / len(prices)) if prices else 0,
-        "min_price": min(prices) if prices else 0,
-        "max_price": max(prices) if prices else 0,
-        "avg_ping": round(sum(pings) / len(pings), 2) if pings else 0,
-        "avg_unit_price_ping": round(sum(unit_prices) / len(unit_prices), 2) if unit_prices else 0,
-        "min_unit_price_ping": round(min(unit_prices), 2) if unit_prices else 0,
-        "max_unit_price_ping": round(max(unit_prices), 2) if unit_prices else 0,
-        "avg_ratio": round(sum(ratios) / len(ratios), 1) if ratios else 0,
-    }
 
 
 def _build_filter_where(filters: dict, params: list) -> list:
@@ -602,16 +390,16 @@ def api_search():
     merged_raw = merged_raw[:limit]
 
     # 批次 OSM 地理編碼（一次處理所有不重複地址）
-    osm_cache = batch_osm_geocode(merged_raw) if location_mode == "osm" else None
+    osm_cache = batch_osm_geocode(merged_raw, geocoder_engine) if location_mode == "osm" else None
 
     # 格式化（含座標策略）
     exclude_special = request.args.get("exclude_special", "").lower() in ("1", "true", "yes")
-    all_transactions = [format_tx_row(r, location_mode, osm_cache) for r in merged_raw]
+    all_transactions = [format_tx_row(r, location_mode, osm_cache, normalize_address, _community_coords_cache) for r in merged_raw]
     if exclude_special:
         all_transactions = [t for t in all_transactions if not t.get("is_special")]
 
     summary = compute_summary(all_transactions)
-    community_summaries = _build_community_summaries(all_transactions)
+    community_summaries = build_community_summaries(all_transactions)
 
     return jsonify(clean_nan({
         "success": True,
@@ -666,13 +454,13 @@ def api_search_area():
         conn.close()
 
         # batch OSM if needed
-        osm_cache = batch_osm_geocode(rows) if location_mode == "osm" else None
+        osm_cache = batch_osm_geocode(rows, geocoder_engine) if location_mode == "osm" else None
         exclude_special = request.args.get("exclude_special", "").lower() in ("1", "true", "yes")
-        all_transactions = [format_tx_row(r, location_mode, osm_cache) for r in rows]
+        all_transactions = [format_tx_row(r, location_mode, osm_cache, normalize_address, _community_coords_cache) for r in rows]
         if exclude_special:
             all_transactions = [t for t in all_transactions if not t.get("is_special")]
 
-        community_summaries = _build_community_summaries(all_transactions)
+        community_summaries = build_community_summaries(all_transactions)
         summary = compute_summary(all_transactions)
 
         return jsonify(clean_nan({
@@ -733,38 +521,6 @@ def api_stats():
     return jsonify({"success": True, **stats})
 
 
-# ── 工具 ──
-
-def _build_community_summaries(transactions: list) -> dict:
-    """按建案名稱分組統計"""
-    community_stats = {}
-    for tx in transactions:
-        cn = tx.get("community_name") or ""
-        if cn:
-            if cn not in community_stats:
-                community_stats[cn] = {"count": 0, "prices": [], "unit_prices": [], "pings": [], "ratios": []}
-            st = community_stats[cn]
-            st["count"] += 1
-            if tx.get("price", 0) > 0:
-                st["prices"].append(tx["price"])
-            if tx.get("unit_price_ping", 0) > 0:
-                st["unit_prices"].append(tx["unit_price_ping"])
-            if tx.get("area_ping", 0) > 0:
-                st["pings"].append(tx["area_ping"])
-            if tx.get("public_ratio", 0) > 0:
-                st["ratios"].append(tx["public_ratio"])
-
-    summaries = {}
-    for cn, st in community_stats.items():
-        summaries[cn] = {
-            "count": st["count"],
-            "avg_price": round(sum(st["prices"]) / len(st["prices"])) if st["prices"] else 0,
-            "avg_unit_price_ping": round(sum(st["unit_prices"]) / len(st["unit_prices"]), 2) if st["unit_prices"] else 0,
-            "avg_ping": round(sum(st["pings"]) / len(st["pings"]), 1) if st["pings"] else 0,
-            "avg_ratio": round(sum(st["ratios"]) / len(st["ratios"]), 1) if st["ratios"] else 0,
-        }
-    return summaries
-
 
 # ════════════════════════════════════════════════════════════════
 # 啟動
@@ -772,7 +528,7 @@ def _build_community_summaries(transactions: list) -> dict:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("🏢 良富居地產 v4.0 — API 伺服器")
+    print("🏢 良富居地產 v4.2 — API 伺服器")
     print("=" * 60)
     print(f"📁 資料庫: {DB_PATH}")
     print(f"🌐 http://localhost:5001")
