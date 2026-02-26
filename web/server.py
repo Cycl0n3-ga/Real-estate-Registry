@@ -46,6 +46,28 @@ from geocoder import TaiwanGeocoder
 app = Flask(__name__, static_folder="static")
 CORS(app)
 
+# ── 全域錯誤處理 ──────────────────────────────────────────────────────────────
+@app.errorhandler(404)
+def not_found(error):
+    """404 錯誤 — 回傳 JSON，而非 HTML"""
+    return jsonify({"success": False, "error": "找不到該路由"}), 404
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    """500 錯誤 — 回傳 JSON，而非 HTML"""
+    import traceback
+    traceback.print_exc()
+    return jsonify({"success": False, "error": "伺服器內部錯誤"}), 500
+
+
+@app.errorhandler(Exception)
+def handle_exception(error):
+    """捕捉所有未處理例外 — 回傳 JSON"""
+    import traceback
+    traceback.print_exc()
+    return jsonify({"success": False, "error": f"錯誤: {str(error)}"}), 500
+
 DB_PATH = str(LAND_DIR / "db" / "land_data.db")
 PING_TO_SQM = 3.30579
 
@@ -310,6 +332,7 @@ def format_tx_row(row: dict) -> dict:
         "parking_price": row.get("parking_price", 0) or 0,
         "parking_area_sqm": row.get("parking_area_sqm", 0) or 0,
         "note": str(row.get("note", "") or ""),
+        "community_name": str(row.get("community_name", "") or ""),
         "lat": lat,
         "lng": lng,
     }
@@ -489,15 +512,176 @@ def api_search():
 
     summary = compute_summary(all_transactions)
 
+    # 按建案名稱分組統計
+    community_stats = {}
+    for tx in all_transactions:
+        cn = tx.get("community_name") or ""
+        if cn:
+            if cn not in community_stats:
+                community_stats[cn] = {"count": 0, "prices": [], "unit_prices": [], "pings": [], "ratios": []}
+            st = community_stats[cn]
+            st["count"] += 1
+            if tx.get("price", 0) > 0:
+                st["prices"].append(tx["price"])
+            if tx.get("unit_price_ping", 0) > 0:
+                st["unit_prices"].append(tx["unit_price_ping"])
+            if tx.get("area_ping", 0) > 0:
+                st["pings"].append(tx["area_ping"])
+            if tx.get("public_ratio", 0) > 0:
+                st["ratios"].append(tx["public_ratio"])
+
+    community_summaries = {}
+    for cn, st in community_stats.items():
+        community_summaries[cn] = {
+            "count": st["count"],
+            "avg_price": round(sum(st["prices"]) / len(st["prices"])) if st["prices"] else 0,
+            "avg_unit_price_ping": round(sum(st["unit_prices"]) / len(st["unit_prices"]), 2) if st["unit_prices"] else 0,
+            "avg_ping": round(sum(st["pings"]) / len(st["pings"]), 1) if st["pings"] else 0,
+            "avg_ratio": round(sum(st["ratios"]) / len(st["ratios"]), 1) if st["ratios"] else 0,
+        }
+
     return jsonify(clean_nan({
         "success": True,
         "keyword": keyword,
         "search_type": search_type,
         "community_name": community_name,
         "transactions": all_transactions,
+        "community_summaries": community_summaries,
         "summary": summary,
         "total": len(all_transactions),
     }))
+
+
+@app.route("/api/search_area", methods=["GET"])
+def api_search_area():
+    """
+    地圖可視區域搜尋 API — 根據經緯度範圍搜尋成交紀錄
+
+    參數:
+      south, north, west, east  - 經緯度邊界（必要）
+      limit                     - 回傳上限 (預設 500)
+      building_type, rooms, public_ratio, year, ping, unit_price, price - 篩選
+    """
+    try:
+        south = float(request.args.get("south", 0))
+        north = float(request.args.get("north", 0))
+        west = float(request.args.get("west", 0))
+        east = float(request.args.get("east", 0))
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "error": "經緯度參數格式錯誤"}), 400
+
+    if south == 0 and north == 0:
+        return jsonify({"success": False, "error": "缺少經緯度範圍參數"}), 400
+
+    limit = min(int(request.args.get("limit", 500)), 2000)
+    filters = parse_filters_from_request()
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # 建立基礎 SQL
+        where_clauses = [
+            "lat >= ? AND lat <= ?",
+            "lng >= ? AND lng <= ?",
+            "lat IS NOT NULL",
+            "lng IS NOT NULL",
+        ]
+        params = [south, north, west, east]
+
+        # 套用篩選條件
+        if filters.get("building_types"):
+            placeholders = ",".join(["?"] * len(filters["building_types"]))
+            where_clauses.append(f"building_type IN ({placeholders})")
+            params.extend(filters["building_types"])
+
+        if filters.get("rooms"):
+            placeholders = ",".join(["?"] * len(filters["rooms"]))
+            where_clauses.append(f"rooms IN ({placeholders})")
+            params.extend(filters["rooms"])
+
+        if filters.get("public_ratio_min") is not None:
+            where_clauses.append("building_area > 0 AND main_area > 0")
+
+        if filters.get("year_min") is not None:
+            where_clauses.append("CAST(SUBSTR(transaction_date, 1, 3) AS INTEGER) >= ?")
+            params.append(int(filters["year_min"]))
+
+        if filters.get("year_max") is not None:
+            where_clauses.append("CAST(SUBSTR(transaction_date, 1, 3) AS INTEGER) <= ?")
+            params.append(int(filters["year_max"]))
+
+        where_sql = " AND ".join(where_clauses)
+        sql = f"""
+            SELECT id, district, address, transaction_date, total_price, unit_price,
+                   building_area AS building_area_sqm, main_area AS main_building_area,
+                   attached_area, balcony_area, rooms, halls, bathrooms,
+                   floor_level, total_floors, building_type, main_use, main_material,
+                   build_date AS completion_date, elevator, has_management,
+                   parking_type, parking_price, parking_area AS parking_area_sqm,
+                   note, lat, lng, community_name
+            FROM land_transaction
+            WHERE {where_sql}
+            ORDER BY transaction_date DESC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        cursor.execute(sql, params)
+        rows = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+
+        # 格式化
+        all_transactions = []
+        for row in rows:
+            tx = format_tx_row(row)
+            tx["community_name"] = row.get("community_name") or ""
+            all_transactions.append(tx)
+
+        # 按建案名稱分組統計
+        community_stats = {}
+        for tx in all_transactions:
+            cn = tx.get("community_name") or ""
+            if cn:
+                if cn not in community_stats:
+                    community_stats[cn] = {"count": 0, "prices": [], "unit_prices": [], "pings": [], "ratios": []}
+                st = community_stats[cn]
+                st["count"] += 1
+                if tx.get("price", 0) > 0:
+                    st["prices"].append(tx["price"])
+                if tx.get("unit_price_ping", 0) > 0:
+                    st["unit_prices"].append(tx["unit_price_ping"])
+                if tx.get("area_ping", 0) > 0:
+                    st["pings"].append(tx["area_ping"])
+                if tx.get("public_ratio", 0) > 0:
+                    st["ratios"].append(tx["public_ratio"])
+
+        # 計算每個建案統計
+        community_summaries = {}
+        for cn, st in community_stats.items():
+            community_summaries[cn] = {
+                "count": st["count"],
+                "avg_price": round(sum(st["prices"]) / len(st["prices"])) if st["prices"] else 0,
+                "avg_unit_price_ping": round(sum(st["unit_prices"]) / len(st["unit_prices"]), 2) if st["unit_prices"] else 0,
+                "avg_ping": round(sum(st["pings"]) / len(st["pings"]), 1) if st["pings"] else 0,
+                "avg_ratio": round(sum(st["ratios"]) / len(st["ratios"]), 1) if st["ratios"] else 0,
+            }
+
+        summary = compute_summary(all_transactions)
+
+        return jsonify(clean_nan({
+            "success": True,
+            "search_type": "area",
+            "transactions": all_transactions,
+            "community_summaries": community_summaries,
+            "summary": summary,
+            "total": len(all_transactions),
+        }))
+
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/api/address2community", methods=["GET"])
