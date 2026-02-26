@@ -16,7 +16,7 @@
   --primary:#1a73e8;--primary-dark:#1558b0;--bg:#f5f7fa;
   --card:#fff;--text:#222;--text2:#555;--border:#ddd;
   --green:#34a853;--red:#ea4335;--orange:#f9ab00;
-  --sidebar-w:420px;--header-h:54px;
+  --sidebar-w:440px;--header-h:54px;
 }
 html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;background:var(--bg);color:var(--text)}
 
@@ -94,7 +94,7 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 /* Sort bar */
 .sort-bar{
   display:flex;gap:2px;padding:8px 12px;border-bottom:1px solid var(--border);
-  background:#fafbfc;flex-wrap:wrap;
+  background:#fafbfc;flex-wrap:wrap;align-items:center;
 }
 .sort-bar button{
   padding:4px 10px;font-size:11px;border:1px solid var(--border);
@@ -121,27 +121,100 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 .results .empty{padding:40px 20px;text-align:center;color:var(--text2);font-size:14px}
 .results .loading{padding:40px 20px;text-align:center;color:var(--text2)}
 
-.tx-card{
-  padding:12px;border-bottom:1px solid #eee;cursor:pointer;
+/* ── 建案群組 ─────────────────────────── */
+.community-group{
+  border-bottom:2px solid #e0e0e0;
+}
+.community-header{
+  display:flex;align-items:center;gap:8px;padding:10px 12px;
+  background:linear-gradient(135deg,#e8f5e9,#f1f8e9);
+  cursor:pointer;user-select:none;
+  border-bottom:1px solid #c8e6c9;
   transition:background .15s;
+  position:sticky;top:0;z-index:10;
 }
-.tx-card:hover{background:#f0f6ff}
-.tx-card.active{background:#e3f0ff;border-left:3px solid var(--primary)}
-.tx-addr{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tx-meta{font-size:11px;color:var(--text2);display:flex;flex-wrap:wrap;gap:6px 12px}
-.tx-meta .tag{
+.community-header:hover{background:linear-gradient(135deg,#c8e6c9,#e8f5e9)}
+.community-header .ch-arrow{
+  font-size:12px;color:var(--text2);transition:transform .2s;min-width:16px;text-align:center;
+}
+.community-header .ch-arrow.open{transform:rotate(90deg)}
+.community-header .ch-name{
+  font-weight:700;font-size:14px;color:#2e7d32;flex:1;
+}
+.community-header .ch-count{
+  background:#2e7d32;color:#fff;padding:2px 8px;border-radius:10px;
+  font-size:11px;font-weight:600;
+}
+.community-stats{
+  display:grid;grid-template-columns:repeat(5,1fr);
+  gap:4px 8px;padding:8px 12px;background:#f6fbf6;
+  border-bottom:1px solid #e0e0e0;font-size:11px;
+}
+.community-stats .cs-item{
+  display:flex;flex-direction:column;align-items:center;
+}
+.community-stats .cs-label{color:var(--text2);font-size:10px}
+.community-stats .cs-value{font-weight:700;color:var(--text);font-size:12px}
+.community-items{overflow:hidden;transition:max-height .3s ease;}
+.community-items.collapsed{max-height:0!important;overflow:hidden}
+
+/* ── 交易卡片（改善版 v2） ─────────────────────── */
+.tx-card{
+  padding:10px 12px 10px 15px;border-bottom:1px solid #ebebeb;cursor:pointer;
+  transition:background .15s;display:grid;
+  grid-template-columns:1fr auto;grid-template-rows:auto auto auto;
+  gap:2px 12px;align-items:start;
+  border-left:3px solid transparent;
+  position:relative;
+}
+.tx-card:hover{background:#f4f8ff;border-left-color:#90b8f8;}
+.tx-card.active{background:#e3f0ff;border-left:3px solid var(--primary);}
+.tx-card.price-high{border-left-color:#ea4335;}
+.tx-card.price-mid{border-left-color:#f9ab00;}
+.tx-card.price-low{border-left-color:#34a853;}
+
+.tx-addr{
+  grid-column:1;font-size:13px;font-weight:700;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  margin-bottom:1px;
+}
+.tx-community-tag{
+  display:inline-flex;align-items:center;padding:1px 7px;background:#e8f5e9;color:#2e7d32;
+  border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap;
+  max-width:140px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;
+  border:1px solid #c8e6c9;
+}
+.tx-community-row{
+  grid-column:1/-1;margin-bottom:2px;
+}
+.tx-detail-row{
+  grid-column:1;display:flex;flex-wrap:wrap;gap:3px 8px;
+  font-size:11.5px;color:var(--text2);align-items:center;
+  line-height:1.5;
+}
+.tx-detail-row .tag{
   display:inline-block;padding:1px 6px;background:#eef3ff;border-radius:10px;
-  font-size:10px;color:var(--primary);
+  font-size:10px;color:var(--primary);border:1px solid #d0e2ff;
 }
-.tx-price{
-  font-size:15px;font-weight:700;color:var(--red);margin-top:4px;
+.tx-price-col{
+  grid-column:2;grid-row:2/4;display:flex;flex-direction:column;
+  align-items:flex-end;justify-content:center;gap:1px;
 }
-.tx-unit{font-size:12px;color:var(--text2);font-weight:400}
-.community-badge{
-  display:inline-block;padding:3px 10px;background:#e8f5e9;color:#2e7d32;
-  border-radius:12px;font-size:12px;font-weight:600;margin-bottom:6px;
+.tx-price{font-size:16px;font-weight:700;color:var(--red);white-space:nowrap;}
+.tx-unit{font-size:11.5px;color:#666;font-weight:600;white-space:nowrap;}
+.tx-total-price{font-size:11px;color:var(--text2);white-space:nowrap;}
+/* 叢集列表標題 */
+.cluster-list-header{
+  padding:8px 12px;background:#fff3e0;border-bottom:2px solid #ffe0b2;
+  display:flex;justify-content:space-between;align-items:center;
+  position:sticky;top:0;z-index:15;
 }
+.cluster-list-header span{font-size:13px;font-weight:700;color:#e65100}
+.cluster-list-header button{
+  border:none;background:none;color:var(--primary);cursor:pointer;
+  font-size:12px;padding:4px 8px;border-radius:6px;
+}
+.cluster-list-header button:hover{background:#e3f0ff}
 
 /* ========== MAP ========== */
 .map-wrap{
@@ -162,7 +235,35 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
   justify-content:center;transition:.2s;color:var(--text);
 }
 .map-controls button:hover{background:var(--primary);color:#fff}
+.map-controls .area-search-btn{
+  width:auto!important;border-radius:20px!important;padding:0 16px!important;font-size:13px!important;
+  font-weight:600;gap:6px;height:38px;
+}
+.map-controls .area-search-btn:hover{background:var(--green);color:#fff;border-color:var(--green)}
 
+/* 定位脈衝動畫 */
+@keyframes pulse{
+  0%{box-shadow:0 0 0 0 rgba(26,115,232,.4)}
+  70%{box-shadow:0 0 0 20px rgba(26,115,232,0)}
+  100%{box-shadow:0 0 0 0 rgba(26,115,232,0)}
+}
+.locate-pulse{
+  width:16px;height:16px;background:var(--primary);border:3px solid #fff;
+  border-radius:50%;animation:pulse 2s infinite;
+}
+
+/* price marker no-bg override */
+.price-marker{background:none!important;border:none!important}
+
+/* ── 建案群組改善 ─── */
+.community-header .ch-stats-inline{
+  display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+  font-size:10px;color:#555;margin-top:2px;
+}
+.community-header .ch-stats-inline span{
+  background:rgba(255,255,255,.7);border-radius:8px;padding:1px 6px;
+  font-size:10px;color:#333;font-weight:600;
+}
 /* ========== 手機 ========== */
 @media(max-width:768px){
   .hamburger{display:block}
@@ -241,13 +342,13 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 
   <!-- Sort -->
   <div class="sort-bar">
-    <button class="active" data-sort="date" onclick="setSort(this)">日期新→舊</button>
-    <button data-sort="price" onclick="setSort(this)">總價高→低</button>
-    <button data-sort="unit_price" onclick="setSort(this)">單價高→低</button>
-    <button data-sort="ping" onclick="setSort(this)">坪數大→小</button>
-    <button data-sort="public_ratio" onclick="setSort(this)">公設低→高</button>
-    <button data-sort="count" onclick="setSort(this)">成交筆數多→少</button>
-    <select id="limitSelect" class="limit-select" onchange="doSearch()" title="顯示筆數">
+    <button class="active" data-sort="date" onclick="setSort(this)">日期</button>
+    <button data-sort="price" onclick="setSort(this)">總價</button>
+    <button data-sort="unit_price" onclick="setSort(this)">單價</button>
+    <button data-sort="ping" onclick="setSort(this)">坪數</button>
+    <button data-sort="public_ratio" onclick="setSort(this)">公設</button>
+    <button data-sort="community" onclick="setSort(this)">建案</button>
+    <select id="limitSelect" class="limit-select" onchange="rerunSearch()" title="顯示筆數">
       <option value="100">100筆</option>
       <option value="200">200筆</option>
       <option value="500" selected>500筆</option>
@@ -261,7 +362,7 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 
   <!-- Results -->
   <div class="results" id="results">
-    <div class="empty">👆 輸入地址或建案名稱開始搜尋</div>
+    <div class="empty">👆 輸入地址或建案名稱開始搜尋<br><span style="font-size:12px;margin-top:8px;display:block">或點擊地圖右下角「🔍 搜此區域」按鈕</span></div>
   </div>
 </div>
 
@@ -269,7 +370,8 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 <div class="map-wrap">
   <div id="map"></div>
   <div class="map-controls">
-    <button onclick="locateMe()" title="我的位置">📍</button>
+    <button class="area-search-btn" onclick="doAreaSearch()" title="搜尋目前地圖範圍內的成交紀錄">🔍 搜此區域</button>
+    <button onclick="locateMe()" title="移動到我的位置">📍</button>
     <button onclick="map.zoomIn()" title="放大">＋</button>
     <button onclick="map.zoomOut()" title="縮小">－</button>
   </div>
@@ -280,11 +382,16 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 // 全域狀態
 // ═══════════════════════════════════════════════════════════════
 let map, markerGroup;
-let unit = 'ping';           // 'ping' | 'sqm'
+let unit = 'ping';
 let currentSort = 'date';
-let txData = [];              // 目前的搜尋結果
+let txData = [];
 let activeCardIdx = -1;
-let markerClusterGroup;       // MarkerClusterGroup 用於聚類
+let markerClusterGroup;
+let collapsedCommunities = {};
+let communitySummaries = {};
+let locationMarker = null;
+let locationCircle = null;
+let lastSearchType = 'none'; // 'keyword' | 'area' | 'none'
 
 // ═══════════════════════════════════════════════════════════════
 // 地圖初始化
@@ -294,16 +401,64 @@ function initMap(){
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
     maxZoom:19, attribution:'© OpenStreetMap'
   }).addTo(map);
-  
-  // 使用 MarkerClusterGroup 替代 layerGroup
+
   markerClusterGroup = L.markerClusterGroup({
-    maxClusterRadius: 80,
-    disableClusteringAtZoom: 17
+    maxClusterRadius: 60,
+    disableClusteringAtZoom: 19,
+    spiderfyOnMaxZoom: true,
+    showCoverageOnHover: false,
+    zoomToBoundsOnClick: true,
+    spiderfyDistanceMultiplier: 2.5,
+    iconCreateFunction: function(cluster) {
+      const count = cluster.getChildCount();
+      let dim = 42;
+      if(count >= 100) dim = 58;
+      else if(count >= 30) dim = 52;
+      else if(count >= 10) dim = 46;
+
+      // 叢集平均單價 (萬/坪)
+      const markers = cluster.getAllChildMarkers();
+      let totalUp = 0, validCount = 0;
+      markers.forEach(m => {
+        if(m._txUnitPrice && m._txUnitPrice > 0){ totalUp += m._txUnitPrice; validCount++; }
+      });
+      const avgUpWan = validCount > 0 ? (totalUp / validCount / 10000) : 0; // 萬/坪
+      let priceLabel = avgUpWan > 0 ? avgUpWan.toFixed(0)+'萬' : '';
+
+      let color = '#1a73e8';
+      if(avgUpWan > 100) color = '#ea4335';
+      else if(avgUpWan > 50) color = '#f9ab00';
+      else if(avgUpWan > 0) color = '#34a853';
+
+      return L.divIcon({
+        html: `<div style="
+          display:flex;flex-direction:column;align-items:center;justify-content:center;
+          width:${dim}px;height:${dim}px;background:${color};border:3px solid #fff;
+          border-radius:50%;color:#fff;font-weight:700;font-size:11px;
+          text-shadow:0 1px 2px rgba(0,0,0,.3);box-shadow:0 2px 8px rgba(0,0,0,.25);
+          line-height:1.2;cursor:pointer;
+        ">${count}筆<br><span style="font-size:9px">${priceLabel}/坪</span></div>`,
+        className: 'price-marker',
+        iconSize: [dim, dim]
+      });
+    }
   });
   map.addLayer(markerClusterGroup);
-  markerGroup = markerClusterGroup;  // 保持向後相容
-  
-  // 添加圖例
+  markerGroup = markerClusterGroup;
+
+  // 叢集點擊：高縮放或密集時在側欄顯示列表
+  markerClusterGroup.on('clusterclick', function(e){
+    const zoom = map.getZoom();
+    const count = e.layer.getChildCount();
+    if(zoom >= 16 || count >= 6){
+      const mkrs = e.layer.getAllChildMarkers();
+      const items = mkrs
+        .filter(m => typeof m._txIdx !== 'undefined' && txData[m._txIdx])
+        .map(m => ({tx: txData[m._txIdx], origIdx: m._txIdx}));
+      if(items.length > 0) showClusterList(items);
+    }
+  });
+
   addLegend();
 }
 
@@ -322,7 +477,6 @@ function setUnit(u){
 // 格式化工具
 // ═══════════════════════════════════════════════════════════════
 function fmtWan(val){
-  // val 是元，轉萬
   if(!val||val<=0) return '-';
   const w = val / 10000;
   if(w >= 10000) return (w/10000).toFixed(2) + '億';
@@ -336,16 +490,25 @@ function fmtArea(sqm, ping){
 }
 
 function fmtUnitPrice(unitPricePing, unitPriceSqm){
-  // unitPricePing 是 元/坪, unitPriceSqm 是 元/m²
   if(unit==='ping'){
     if(!unitPricePing||unitPricePing<=0) return '-';
-    const w = unitPricePing / 10000;
-    return w.toFixed(1) + '萬/坪';
+    return (unitPricePing / 10000).toFixed(1) + '萬/坪';
   } else {
     if(!unitPriceSqm||unitPriceSqm<=0) return '-';
-    const w = unitPriceSqm / 10000;
-    return w.toFixed(1) + '萬/m²';
+    return (unitPriceSqm / 10000).toFixed(1) + '萬/m²';
   }
+}
+
+function escHtml(s){
+  if(!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s){
+  if(!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function cssId(s){
+  return btoa(unescape(encodeURIComponent(s))).replace(/[^a-zA-Z0-9]/g,'_');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -391,7 +554,7 @@ function getFilterParams(){
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 前端排序（全部在白調內處理、不再呼叫 API）
+// 前端排序
 // ═══════════════════════════════════════════════════════════════
 function sortData(sortType){
   switch(sortType){
@@ -410,35 +573,45 @@ function sortData(sortType){
     case 'public_ratio':
       txData.sort((a,b) => (a.public_ratio||999) - (b.public_ratio||999));
       break;
-    case 'count':{
-      const addrCount = {};
-      txData.forEach(tx => {
-        addrCount[tx.address] = (addrCount[tx.address]||0) + 1;
+    case 'community': {
+      txData.sort((a,b) => {
+        const ca = a.community_name || '';
+        const cb = b.community_name || '';
+        if(ca && !cb) return -1;
+        if(!ca && cb) return 1;
+        if(ca !== cb) return ca.localeCompare(cb);
+        return (b.date_raw||'').localeCompare(a.date_raw||'');
       });
-      txData.sort((a,b) => addrCount[b.address] - addrCount[a.address]);
       break;
     }
   }
 }
 
 function setSort(btn){
-  document.querySelectorAll('.sort-bar button').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.sort-bar button[data-sort]').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   currentSort = btn.dataset.sort;
   if(txData.length > 0){
     sortData(currentSort);
     renderResults();
-    plotMarkers();
+    plotMarkers(false);
   }
 }
 
+// 限筆數變更時重新搜尋
+function rerunSearch(){
+  if(lastSearchType === 'area') doAreaSearch();
+  else if(lastSearchType === 'keyword') doSearch();
+}
+
 // ═══════════════════════════════════════════════════════════════
-// 搜尋
+// 關鍵字搜尋
 // ═══════════════════════════════════════════════════════════════
 async function doSearch(){
   const kw = document.getElementById('searchInput').value.trim();
   if(!kw){alert('請輸入搜尋關鍵字');return;}
 
+  lastSearchType = 'keyword';
   const results = document.getElementById('results');
   results.innerHTML = '<div class="loading">🔍 搜尋中…</div>';
 
@@ -447,73 +620,261 @@ async function doSearch(){
               '&limit=' + limitVal + getFilterParams();
   try{
     const resp = await fetch(url);
+    const ctype = resp.headers.get('content-type') || '';
+    if(!ctype.includes('application/json')){
+      const text = await resp.text();
+      results.innerHTML = `<div class="empty">❌ 伺服器回應異常 (HTTP ${resp.status})</div>`;
+      console.error('Non-JSON response from /api/search:', text.substring(0, 300));
+      return;
+    }
     const data = await resp.json();
     if(!data.success){
       results.innerHTML = '<div class="empty">❌ ' + (data.error||'搜尋失敗') + '</div>';
       return;
     }
-    txData = data.transactions || [];
-    if(txData.length === 0){
-      results.innerHTML = '<div class="empty">😢 沒有找到符合條件的資料</div>';
+    handleSearchResult(data);
+  } catch(e){
+    results.innerHTML = '<div class="empty">❌ 網路錯誤: ' + e.message + '</div>';
+    console.error('Search error:', e);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 區域搜尋（地圖可視範圍）
+// ═══════════════════════════════════════════════════════════════
+async function doAreaSearch(){
+  const bounds = map.getBounds();
+  lastSearchType = 'area';
+  const results = document.getElementById('results');
+  results.innerHTML = '<div class="loading">🔍 搜尋此區域成交紀錄…</div>';
+
+  const limitVal = document.getElementById('limitSelect').value;
+  const url = `/api/search_area?south=${bounds.getSouth()}&north=${bounds.getNorth()}&west=${bounds.getWest()}&east=${bounds.getEast()}&limit=${limitVal}` + getFilterParams();
+
+  try{
+    const resp = await fetch(url);
+    const ctype = resp.headers.get('content-type') || '';
+    if(!ctype.includes('application/json')){
+      const text = await resp.text();
+      results.innerHTML = `<div class="empty">❌ 搜此區域失敗 (HTTP ${resp.status})<br><span style="font-size:11px;color:#aaa">${escHtml(text.substring(0,80))}</span></div>`;
+      console.error('Non-JSON response from /api/search_area:', text.substring(0, 300));
+      return;
+    }
+    const data = await resp.json();
+    if(!data.success){
+      results.innerHTML = '<div class="empty">❌ ' + (data.error||'搜尋失敗') + '</div>';
+      return;
+    }
+    if(!data.transactions || data.transactions.length === 0){
+      results.innerHTML = '<div class="empty">😢 此區域沒有成交紀錄<br><span style="font-size:12px">試試放大地圖或移動到其他區域</span></div>';
       document.getElementById('summaryBar').style.display = 'none';
       markerGroup.clearLayers();
       return;
     }
-
-    // 顯示建案 badge
-    window._communityName = data.community_name || null;
-    window._searchType = data.search_type || 'address';
-    window._summary = data.summary || {};
-
-    // 前端排序
-    sortData(currentSort);
-
-    renderResults();
-    renderSummary();
-    plotMarkers();
-
-    // 手機上自動收起 sidebar
-    if(window.innerWidth <= 768){
-      document.getElementById('sidebar').classList.remove('open');
-    }
+    handleSearchResult(data, false);
   } catch(e){
-    results.innerHTML = '<div class="empty">❌ 網路錯誤: ' + e.message + '</div>';
+    results.innerHTML = '<div class="empty">❌ 搜此區域失敗: ' + e.message + '</div>';
+    console.error('Area search error:', e);
   }
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 渲染結果列表
+// 統一處理搜尋結果
+// ═══════════════════════════════════════════════════════════════
+function handleSearchResult(data, fitBounds = true){
+  txData = data.transactions || [];
+  if(txData.length === 0){
+    document.getElementById('results').innerHTML = '<div class="empty">😢 沒有找到符合條件的資料</div>';
+    document.getElementById('summaryBar').style.display = 'none';
+    markerGroup.clearLayers();
+    return;
+  }
+
+  window._communityName = data.community_name || null;
+  window._searchType = data.search_type || 'address';
+  window._summary = data.summary || {};
+  communitySummaries = data.community_summaries || {};
+  collapsedCommunities = {};
+
+  sortData(currentSort);
+  renderResults();
+  renderSummary();
+  plotMarkers(fitBounds);
+
+  if(window.innerWidth <= 768){
+    document.getElementById('sidebar').classList.remove('open');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 渲染結果列表 — 建案分組 + 改善卡片
 // ═══════════════════════════════════════════════════════════════
 function renderResults(){
   const container = document.getElementById('results');
-  let html = '';
 
-  if(window._communityName){
-    html += '<div style="padding:10px 12px"><span class="community-badge">🏘️ ' +
-            escHtml(window._communityName) + '</span></div>';
-  }
+  // 按建案分組
+  const groups = [];
+  const communityMap = {};
+  const noComItems = [];
 
   txData.forEach((tx, i) => {
-    const isActive = i === activeCardIdx;
-    html += `<div class="tx-card${isActive?' active':''}" onclick="selectTx(${i})" data-idx="${i}">
-      <div class="tx-addr" title="${escHtml(tx.address)}">${escHtml(tx.address)}</div>
-      <div class="tx-meta">
-        <span>📅 ${tx.date||'-'}</span>
-        <span>📐 ${fmtArea(tx.area_sqm, tx.area_ping)}</span>
-        <span>${tx.rooms||0}房${tx.halls||0}廳${tx.baths||0}衛</span>
-        ${tx.floor?'<span>🏢 '+escHtml(tx.floor)+'F/'+escHtml(tx.total_floors)+'F</span>':''}
-        ${tx.public_ratio>0?'<span class="tag">公設'+tx.public_ratio+'%</span>':''}
-        ${tx.building_type?'<span class="tag">'+escHtml(tx.building_type)+'</span>':''}
-      </div>
-      <div class="tx-price">${fmtWan(tx.price)} <span class="tx-unit">${fmtUnitPrice(tx.unit_price_ping, tx.unit_price_sqm)}</span></div>
-    </div>`;
+    const cn = tx.community_name || '';
+    if(cn){
+      if(!(cn in communityMap)){
+        communityMap[cn] = groups.length;
+        groups.push({name: cn, items: []});
+      }
+      groups[communityMap[cn]].items.push({tx, origIdx: i});
+    } else {
+      noComItems.push({tx, origIdx: i});
+    }
   });
+
+  let html = '';
+
+  // 全局建案名稱（單一建案搜尋時）
+  if(window._communityName && groups.length <= 1 && window._searchType !== 'area'){
+    html += `<div style="padding:10px 12px;background:#e8f5e9;border-bottom:1px solid #c8e6c9">
+      <span style="font-weight:700;font-size:14px;color:#2e7d32">🏘️ ${escHtml(window._communityName)}</span>
+    </div>`;
+  }
+
+  // 有建案的群組
+  groups.forEach(group => {
+    const cn = group.name;
+    const isCollapsed = collapsedCommunities[cn] === true;
+    const stats = communitySummaries[cn] || computeLocalStats(group.items);
+
+    html += `<div class="community-group">`;
+    const inlineStats = stats
+      ? [
+          stats.avg_unit_price_ping > 0 ? `均單 ${(stats.avg_unit_price_ping/10000).toFixed(0)}萬/坪` : '',
+          stats.avg_ping > 0 ? `均坪 ${stats.avg_ping.toFixed(0)}坪` : '',
+          stats.avg_ratio > 0 ? `公設 ${stats.avg_ratio.toFixed(0)}%` : '',
+        ].filter(Boolean)
+      : [];
+    html += `<div class="community-header" onclick="toggleCommunity(this, '${escAttr(cn)}')">
+      <span class="ch-arrow ${isCollapsed?'':'open'}">▶</span>
+      <div style="flex:1;min-width:0">
+        <div class="ch-name">${escHtml(cn)}</div>
+        ${inlineStats.length ? `<div class="ch-stats-inline">${inlineStats.map(s=>`<span>${s}</span>`).join('')}</div>` : ''}
+      </div>
+      <span class="ch-count">${group.items.length} 筆</span>
+    </div>`;
+
+    // 建案統計面板
+    if(stats){
+      html += `<div class="community-stats" id="cstats-${cssId(cn)}" style="${isCollapsed?'display:none':''}">
+        <div class="cs-item"><span class="cs-label">📊 交易筆數</span><span class="cs-value">${group.items.length} 筆</span></div>
+        <div class="cs-item"><span class="cs-label">💰 均總價</span><span class="cs-value">${fmtWan(stats.avg_price)}</span></div>
+        <div class="cs-item"><span class="cs-label">📈 均單價</span><span class="cs-value">${stats.avg_unit_price_ping > 0 ? (stats.avg_unit_price_ping/10000).toFixed(1)+'萬/坪' : '-'}</span></div>
+        <div class="cs-item"><span class="cs-label">📐 均坪數</span><span class="cs-value">${stats.avg_ping > 0 ? stats.avg_ping.toFixed(1)+'坪' : '-'}</span></div>
+        <div class="cs-item"><span class="cs-label">🏗️ 公設比</span><span class="cs-value" style="color:${stats.avg_ratio>35?'var(--red)':stats.avg_ratio>30?'var(--orange)':'var(--green)'}">${stats.avg_ratio > 0 ? stats.avg_ratio.toFixed(1)+'%' : '-'}</span></div>
+      </div>`;
+    }
+
+    html += `<div class="community-items ${isCollapsed?'collapsed':''}" id="citems-${cssId(cn)}" style="${isCollapsed?'max-height:0':'max-height:999999px'}">`;
+    group.items.forEach(item => {
+      html += renderTxCard(item.tx, item.origIdx, true);
+    });
+    html += `</div></div>`;
+  });
+
+  // 無建案交易
+  if(noComItems.length > 0){
+    if(groups.length > 0){
+      html += `<div style="padding:8px 12px;background:#f5f5f5;border-bottom:1px solid #e0e0e0;font-size:12px;color:var(--text2);font-weight:600">其他交易 (${noComItems.length} 筆)</div>`;
+    }
+    noComItems.forEach(item => {
+      html += renderTxCard(item.tx, item.origIdx, false);
+    });
+  }
+
+  if(!html) html = '<div class="empty">沒有資料</div>';
   container.innerHTML = html;
 }
 
-function escHtml(s){
-  if(!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function renderTxCard(tx, idx, inGroup){
+  const isActive = idx === activeCardIdx;
+  const cn = tx.community_name || '';
+
+  // 根據單價決定色條樣式
+  const upWan = (tx.unit_price_ping||0) / 10000;
+  let priceClass = '';
+  if(upWan > 100) priceClass = ' price-high';
+  else if(upWan > 50) priceClass = ' price-mid';
+  else if(upWan > 0) priceClass = ' price-low';
+
+  // 建案標籤：非群組內永遠顯示；群組內也顯示（較小樣式）
+  const cnTag = cn
+    ? `<span class="tx-community-tag" title="${escAttr(cn)}">${escHtml(cn)}</span>`
+    : '';
+  const cnRow = cnTag ? `<div class="tx-community-row">${cnTag}</div>` : '';
+
+  return `<div class="tx-card${isActive?' active':''}${priceClass}" onclick="selectTx(${idx})" data-idx="${idx}">
+    <div class="tx-addr" title="${escAttr(tx.address)}">${escHtml(tx.address)}</div>
+    ${cnRow}
+    <div class="tx-detail-row">
+      <span>📅 ${tx.date||'-'}</span>
+      <span>📐 ${fmtArea(tx.area_sqm, tx.area_ping)}</span>
+      <span>${tx.rooms||0}房${tx.halls||0}廳${tx.baths||0}衛</span>
+      ${tx.floor ? `<span>🏢 ${escHtml(String(tx.floor))}F/${escHtml(String(tx.total_floors))}F</span>` : ''}
+      ${tx.public_ratio>0 ? `<span class="tag">公設${tx.public_ratio}%</span>` : ''}
+      ${tx.building_type ? `<span class="tag">${escHtml(tx.building_type)}</span>` : ''}
+    </div>
+    <div class="tx-price-col">
+      <div class="tx-unit">${fmtUnitPrice(tx.unit_price_ping, tx.unit_price_sqm)}</div>
+      <div class="tx-price">${fmtWan(tx.price)}</div>
+    </div>
+  </div>`;
+}
+
+// 前端計算建案統計（後端沒提供時）
+function computeLocalStats(items){
+  if(!items||items.length===0) return null;
+  let prices=[],ups=[],pings=[],ratios=[];
+  items.forEach(({tx})=>{
+    if(tx.price>0) prices.push(tx.price);
+    if(tx.unit_price_ping>0) ups.push(tx.unit_price_ping);
+    if(tx.area_ping>0) pings.push(tx.area_ping);
+    if(tx.public_ratio>0) ratios.push(tx.public_ratio);
+  });
+  const avg = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0;
+  return {
+    count: items.length,
+    avg_price: Math.round(avg(prices)),
+    avg_unit_price_ping: avg(ups),
+    avg_ping: avg(pings),
+    avg_ratio: avg(ratios),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 建案折疊/展開
+// ═══════════════════════════════════════════════════════════════
+function toggleCommunity(headerEl, name){
+  const isNowCollapsed = !collapsedCommunities[name];
+  collapsedCommunities[name] = isNowCollapsed;
+
+  const itemsEl = document.getElementById('citems-' + cssId(name));
+  const statsEl = document.getElementById('cstats-' + cssId(name));
+  const arrow = headerEl.querySelector('.ch-arrow');
+
+  if(itemsEl){
+    if(isNowCollapsed){
+      itemsEl.classList.add('collapsed');
+      itemsEl.style.maxHeight = '0';
+    } else {
+      itemsEl.classList.remove('collapsed');
+      itemsEl.style.maxHeight = '999999px';
+    }
+  }
+  if(statsEl){
+    statsEl.style.display = isNowCollapsed ? 'none' : '';
+  }
+  if(arrow){
+    arrow.classList.toggle('open', !isNowCollapsed);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -527,13 +888,16 @@ function renderSummary(){
   }
   const bar = document.getElementById('summaryBar');
   bar.style.display = 'block';
-  
+
   const avgUp = unit==='ping' ? fmtUnitPrice(s.avg_unit_price_ping, 0) : fmtUnitPrice(0, s.avg_unit_price_ping / 3.30579);
   const minUp = unit==='ping' ? fmtUnitPrice(s.min_unit_price_ping, 0) : fmtUnitPrice(0, s.min_unit_price_ping / 3.30579);
   const maxUp = unit==='ping' ? fmtUnitPrice(s.max_unit_price_ping, 0) : fmtUnitPrice(0, s.max_unit_price_ping / 3.30579);
-  
+
+  const comCount = Object.keys(communitySummaries).length;
+  const comInfo = comCount > 0 ? ` ｜ <span class="val">${comCount}</span> 個建案` : '';
+
   bar.innerHTML = `
-    共 <span class="val">${s.total}</span> 筆 ｜
+    共 <span class="val">${s.total}</span> 筆${comInfo} ｜
     均價 <span class="val">${fmtWan(s.avg_price)}</span> ｜
     均坪 <span class="val">${s.avg_ping}坪</span> ｜
     單價 <span class="val">${avgUp}</span>
@@ -546,77 +910,65 @@ function renderSummary(){
 // ═══════════════════════════════════════════════════════════════
 // 地圖 marker
 // ═══════════════════════════════════════════════════════════════
-function plotMarkers(){
+function plotMarkers(fitBounds = true){
   markerClusterGroup.clearLayers();
-  const bounds = [];
+  const boundsArr = [];
 
   txData.forEach((tx, i) => {
     if(!tx.lat || !tx.lng) return;
 
-    // 依據總價區間決定顏色
+    const upPing = tx.unit_price_ping || 0;
+    const upWan = upPing / 10000; // 萬/坪
     let color = '#888';
-    if (tx.price > 0) {
-      if (tx.price > 40000000) {
-        color = '#ea4335'; // > 4000萬
-      } else if (tx.price > 20000000) {
-        color = '#f9ab00'; // 2000~4000萬
-      } else {
-        color = '#34a853'; // ≤ 2000萬
-      }
+    if(upPing > 0){
+      if(upWan > 100) color = '#ea4335';
+      else if(upWan > 50) color = '#f9ab00';
+      else color = '#34a853';
     }
 
-    // 格式化總價用於顯示
-    const priceText = tx.price >= 100000000 
-      ? (tx.price / 100000000).toFixed(1) + '億'
-      : (tx.price / 10000).toFixed(0) + '萬';
+    // 地圖 marker 顯示單價/坪
+    const priceText = upPing > 0
+      ? upWan.toFixed(0) + '萬'
+      : (tx.price > 0 ? (tx.price/10000).toFixed(0)+'萬' : '-');
 
-    // 建立自訂 marker HTML
-    const markerHtml = `
-      <div style="
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 50px;
-        height: 50px;
-        background: ${color};
-        border: 3px solid white;
-        border-radius: 50%;
-        font-size: 12px;
-        font-weight: bold;
-        color: white;
-        text-shadow: 0 1px 2px rgba(0,0,0,0.3);
-      ">
-        ${priceText}
-      </div>
-    `;
+    const markerHtml = `<div style="
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      width:46px;height:46px;background:${color};
+      border:2px solid white;border-radius:50%;
+      font-size:10px;font-weight:bold;color:white;
+      text-shadow:0 1px 2px rgba(0,0,0,.3);
+      box-shadow:0 2px 6px rgba(0,0,0,.2);line-height:1.2;
+    ">${priceText}<span style="font-size:8px;opacity:.85">/坪</span></div>`;
 
-    const markerIcon = L.divIcon({
-      html: markerHtml,
-      iconSize: [50, 50],
-      className: 'price-marker'
+    const marker = L.marker([tx.lat, tx.lng], {
+      icon: L.divIcon({html: markerHtml, iconSize:[46,46], className:'price-marker'})
     });
-
-    const marker = L.marker([tx.lat, tx.lng], {icon: markerIcon});
-    marker.bindPopup(makePopup(tx), {maxWidth:300});
+    marker._txPrice = tx.price;
+    marker._txUnitPrice = tx.unit_price_ping;
+    marker._txIdx = i;
+    marker.bindPopup(makePopup(tx), {maxWidth:320});
     marker.on('click', () => {
       activeCardIdx = i;
       renderResults();
-      // 滾動到對應卡片
       const card = document.querySelector(`.tx-card[data-idx="${i}"]`);
       if(card) card.scrollIntoView({behavior:'smooth', block:'center'});
     });
 
     markerClusterGroup.addLayer(marker);
-    bounds.push([tx.lat, tx.lng]);
+    boundsArr.push([tx.lat, tx.lng]);
   });
 
-  if(bounds.length > 0){
-    map.fitBounds(bounds, {padding:[40,40], maxZoom:16});
+  if(fitBounds && boundsArr.length > 0){
+    map.fitBounds(boundsArr, {padding:[40,40], maxZoom:16});
   }
 }
 
 function makePopup(tx){
+  const cn = tx.community_name
+    ? `<div style="background:#e8f5e9;padding:2px 8px;border-radius:8px;display:inline-block;color:#2e7d32;font-size:12px;font-weight:600;margin-bottom:4px">🏘️ ${escHtml(tx.community_name)}</div><br>`
+    : '';
   return `<div style="font-size:13px;line-height:1.6">
+    ${cn}
     <b>${escHtml(tx.address)}</b><br>
     📅 ${tx.date||'-'} ｜ 📐 ${fmtArea(tx.area_sqm, tx.area_ping)}<br>
     💰 <b style="color:#ea4335">${fmtWan(tx.price)}</b>
@@ -637,12 +989,12 @@ function selectTx(idx){
   renderResults();
   const tx = txData[idx];
   if(tx && tx.lat && tx.lng){
-    map.setView([tx.lat, tx.lng], 16);
-    // 開啟對應 popup
-    markerGroup.eachLayer(layer => {
-      const ll = layer.getLatLng();
-      if(Math.abs(ll.lat - tx.lat) < 0.0001 && Math.abs(ll.lng - tx.lng) < 0.0001){
-        layer.openPopup();
+    map.setView([tx.lat, tx.lng], 17);
+    markerClusterGroup.eachLayer(layer => {
+      if(layer._txIdx === idx){
+        markerClusterGroup.zoomToShowLayer(layer, () => {
+          layer.openPopup();
+        });
       }
     });
   }
@@ -652,56 +1004,20 @@ function selectTx(idx){
 // 圖例
 // ═══════════════════════════════════════════════════════════════
 function addLegend(){
-  const legend = L.control({position: 'bottomright'});
-  
+  const legend = L.control({position: 'bottomleft'});
   legend.onAdd = function(){
-    const div = L.DomUtil.create('div', 'info legend');
+    const div = L.DomUtil.create('div','');
     div.innerHTML = `
-      <style>
-        .legend {
-          background: white;
-          padding: 12px;
-          border-radius: 5px;
-          box-shadow: 0 0 15px rgba(0,0,0,0.2);
-          font-size: 13px;
-          line-height: 1.8;
-        }
-        .legend-item {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin-bottom: 6px;
-        }
-        .legend-color {
-          width: 20px;
-          height: 20px;
-          border-radius: 50%;
-          border: 2px solid #fff;
-          box-shadow: 0 1px 2px rgba(0,0,0,0.3);
-        }
-      </style>
-      <div style="font-weight: bold; margin-bottom: 8px;">總價區間</div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: #34a853;"></div>
-        <span>≤ 2000萬</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: #f9ab00;"></div>
-        <span>2000 ~ 4000萬</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: #ea4335;"></div>
-        <span>&gt; 4000萬</span>
-      </div>
-    `;
-    
-    // 阻止地圖事件冒泡
+      <div style="background:#fff;padding:10px 12px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.15);font-size:12px;line-height:1.8">
+        <div style="font-weight:700;margin-bottom:4px">單價 (萬/坪)</div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#34a853;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>≤ 50萬/坪</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#f9ab00;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>50~100萬/坪</span></div>
+        <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:#ea4335;border:2px solid #fff;box-shadow:0 1px 2px rgba(0,0,0,.2)"></div><span>&gt; 100萬/坪</span></div>
+      </div>`;
     L.DomEvent.disableScrollPropagation(div);
     L.DomEvent.disableClickPropagation(div);
-    
     return div;
   };
-  
   legend.addTo(map);
 }
 
@@ -713,16 +1029,60 @@ function locateMe(){
     alert('您的瀏覽器不支援定位功能');
     return;
   }
+  const btn = document.querySelector('.map-controls button[title="移動到我的位置"]');
+  if(btn){ btn.style.background='#e3f2fd'; btn.innerHTML='⏳'; }
+
   navigator.geolocation.getCurrentPosition(
     pos => {
-      const {latitude:lat, longitude:lng} = pos.coords;
-      map.setView([lat,lng], 16);
-      L.marker([lat,lng]).addTo(map)
-        .bindPopup('📍 您的位置').openPopup();
+      const {latitude:lat, longitude:lng, accuracy} = pos.coords;
+      map.setView([lat, lng], 16);
+
+      // 移除舊標記
+      if(locationMarker){ map.removeLayer(locationMarker); }
+      if(locationCircle){ map.removeLayer(locationCircle); }
+
+      locationCircle = L.circle([lat, lng], {
+        radius: accuracy, color:'#1a73e8', fillColor:'#1a73e8',
+        fillOpacity:0.1, weight:1
+      }).addTo(map);
+
+      locationMarker = L.marker([lat, lng], {
+        icon: L.divIcon({
+          html:'<div class="locate-pulse"></div>',
+          iconSize:[16,16], className:''
+        }),
+        zIndexOffset: 1000
+      }).addTo(map)
+       .bindPopup(`📍 您的位置<br><span style="font-size:11px;color:#666">精確度: ±${Math.round(accuracy)}m</span>`)
+       .openPopup();
+
+      setTimeout(() => { if(locationCircle) map.removeLayer(locationCircle); locationCircle=null; }, 5000);
+      if(btn){ btn.style.background=''; btn.innerHTML='📍'; }
     },
-    err => alert('定位失敗: ' + err.message),
+    err => {
+      alert('定位失敗: ' + err.message);
+      if(btn){ btn.style.background=''; btn.innerHTML='📍'; }
+    },
     {enableHighAccuracy:true, timeout:10000}
   );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 叢集列表面板
+// ═══════════════════════════════════════════════════════════════
+function showClusterList(items){
+  const container = document.getElementById('results');
+  let html = `<div class="cluster-list-header">
+    <span>📍 此位置 ${items.length} 筆重疊資料</span>
+    <button onclick="renderResults()">↩ 返回全列表</button>
+  </div>`;
+  items.forEach(({tx, origIdx}) => {
+    html += renderTxCard(tx, origIdx, false);
+  });
+  container.innerHTML = html;
+  if(window.innerWidth <= 768){
+    document.getElementById('sidebar').classList.add('open');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════

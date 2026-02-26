@@ -601,8 +601,15 @@ def api_search_area():
             where_clauses.append(f"rooms IN ({placeholders})")
             params.extend(filters["rooms"])
 
-        if filters.get("public_ratio_min") is not None:
+        if filters.get("public_ratio_min") is not None or filters.get("public_ratio_max") is not None:
             where_clauses.append("building_area > 0 AND main_area > 0")
+            pr_expr = "CAST((building_area - main_area - COALESCE(attached_area,0) - COALESCE(balcony_area,0)) * 100.0 / building_area AS REAL)"
+            if filters.get("public_ratio_min") is not None:
+                where_clauses.append(f"{pr_expr} >= ?")
+                params.append(float(filters["public_ratio_min"]))
+            if filters.get("public_ratio_max") is not None:
+                where_clauses.append(f"{pr_expr} <= ?")
+                params.append(float(filters["public_ratio_max"]))
 
         if filters.get("year_min") is not None:
             where_clauses.append("CAST(SUBSTR(transaction_date, 1, 3) AS INTEGER) >= ?")
@@ -611,6 +618,30 @@ def api_search_area():
         if filters.get("year_max") is not None:
             where_clauses.append("CAST(SUBSTR(transaction_date, 1, 3) AS INTEGER) <= ?")
             params.append(int(filters["year_max"]))
+
+        if filters.get("ping_min") is not None:
+            where_clauses.append("building_area >= ?")
+            params.append(float(filters["ping_min"]) * PING_TO_SQM)
+
+        if filters.get("ping_max") is not None:
+            where_clauses.append("building_area <= ?")
+            params.append(float(filters["ping_max"]) * PING_TO_SQM)
+
+        if filters.get("unit_price_min") is not None:
+            where_clauses.append("unit_price >= ?")
+            params.append(float(filters["unit_price_min"]) * 10000 / PING_TO_SQM)
+
+        if filters.get("unit_price_max") is not None:
+            where_clauses.append("unit_price <= ?")
+            params.append(float(filters["unit_price_max"]) * 10000 / PING_TO_SQM)
+
+        if filters.get("price_min") is not None:
+            where_clauses.append("total_price >= ?")
+            params.append(float(filters["price_min"]) * 10000)
+
+        if filters.get("price_max") is not None:
+            where_clauses.append("total_price <= ?")
+            params.append(float(filters["price_max"]) * 10000)
 
         where_sql = " AND ".join(where_clauses)
         sql = f"""
