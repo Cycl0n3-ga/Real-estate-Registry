@@ -1020,23 +1020,30 @@ function positionAcList(){
   list.style.width = (rect.right - rect.left + 60) + 'px'; // 含搜尋按鈕寬度
 }
 
-// hover 交易卡片 → 地圖移動 + marker 彈跳
+// hover 交易卡片 → 移到「建案群組」中心（DB 座標）+ marker 彈跳
 function hoverTx(idx){
-  const tx = txData[idx];
-  if(!tx || !tx.lat || !tx.lng) return;
-  // 輕移地圖（不縮放）
-  map.panTo([tx.lat, tx.lng], {animate:true, duration:0.25});
-  // 找對應 marker 彈跳
+  // 找到包含此 tx 的群組 marker
+  let targetMarker = null;
   markerClusterGroup.eachLayer(layer => {
-    if(layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)){
-      const el = layer.getElement ? layer.getElement() : null;
-      if(el){
-        el.classList.remove('marker-bounce');
-        void el.offsetWidth; // trigger reflow
-        el.classList.add('marker-bounce');
-      }
+    if(!targetMarker && layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)){
+      targetMarker = layer;
     }
   });
+  if(!targetMarker) return;
+
+  // 移到群組中心（即 marker 的 lat/lng，為 DB 座標中位數）
+  const latLng = targetMarker.getLatLng();
+  map.panTo(latLng, {animate:true, duration:0.25});
+
+  // 取 marker icon 內層 div 動畫（外層是 Leaflet 用 transform 定位，不能覆蓋）
+  const iconEl = targetMarker._icon;
+  if(iconEl){
+    const inner = iconEl.firstElementChild || iconEl;
+    inner.classList.remove('marker-bounce');
+    void inner.offsetWidth; // reflow 讓動畫重新觸發
+    inner.classList.add('marker-bounce');
+    inner.addEventListener('animationend', () => inner.classList.remove('marker-bounce'), {once:true});
+  }
 }
 
 // 點擊外部關閉
