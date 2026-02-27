@@ -50,6 +50,12 @@ from data_utils import (
     format_tx_row, compute_summary, build_community_summaries,
     batch_osm_geocode, PING_TO_SQM,
 )
+from search_area import (
+    search_area as _search_area_db,
+    search_by_community_name as _search_by_community_name_db,
+    build_filter_where as _build_filter_where,
+    SELECT_COLS,
+)
 
 # ── Flask 設定 ────────────────────────────────────────────────────────────────
 app = Flask(__name__, static_folder="static")
@@ -190,76 +196,10 @@ def get_osm_coords(address: str, district: str = "") -> tuple:
     return None, None
 
 
-def _build_filter_where(filters: dict, params: list) -> list:
-    """建立篩選 WHERE 子句（給 area 和 community 直查共用）"""
-    clauses = []
-    if filters.get("building_types"):
-        placeholders = ",".join(["?"] * len(filters["building_types"]))
-        clauses.append(f"building_type IN ({placeholders})")
-        params.extend(filters["building_types"])
-    if filters.get("rooms"):
-        placeholders = ",".join(["?"] * len(filters["rooms"]))
-        clauses.append(f"rooms IN ({placeholders})")
-        params.extend(filters["rooms"])
-    if filters.get("public_ratio_min") is not None or filters.get("public_ratio_max") is not None:
-        clauses.append("building_area > 0 AND main_area > 0")
-        pr = "CAST((building_area - main_area - COALESCE(attached_area,0) - COALESCE(balcony_area,0)) * 100.0 / building_area AS REAL)"
-        if filters.get("public_ratio_min") is not None:
-            clauses.append(f"{pr} >= ?")
-            params.append(float(filters["public_ratio_min"]))
-        if filters.get("public_ratio_max") is not None:
-            clauses.append(f"{pr} <= ?")
-            params.append(float(filters["public_ratio_max"]))
-    if filters.get("year_min") is not None:
-        clauses.append("CAST(SUBSTR(transaction_date, 1, 3) AS INTEGER) >= ?")
-        params.append(int(filters["year_min"]))
-    if filters.get("year_max") is not None:
-        clauses.append("CAST(SUBSTR(transaction_date, 1, 3) AS INTEGER) <= ?")
-        params.append(int(filters["year_max"]))
-    if filters.get("ping_min") is not None:
-        clauses.append("building_area >= ?")
-        params.append(float(filters["ping_min"]) * PING_TO_SQM)
-    if filters.get("ping_max") is not None:
-        clauses.append("building_area <= ?")
-        params.append(float(filters["ping_max"]) * PING_TO_SQM)
-    if filters.get("unit_price_min") is not None:
-        clauses.append("unit_price >= ?")
-        params.append(float(filters["unit_price_min"]) * 10000 / PING_TO_SQM)
-    if filters.get("unit_price_max") is not None:
-        clauses.append("unit_price <= ?")
-        params.append(float(filters["unit_price_max"]) * 10000 / PING_TO_SQM)
-    if filters.get("price_min") is not None:
-        clauses.append("total_price >= ?")
-        params.append(float(filters["price_min"]) * 10000)
-    if filters.get("price_max") is not None:
-        clauses.append("total_price <= ?")
-        params.append(float(filters["price_max"]) * 10000)
-    return clauses
-
-
-SELECT_COLS = """
-    id, district, address, transaction_date, total_price, unit_price,
-    building_area AS building_area_sqm, main_area AS main_building_area,
-    attached_area, balcony_area, rooms, halls, bathrooms,
-    floor_level, total_floors, building_type, main_use, main_material,
-    build_date AS completion_date, elevator, has_management,
-    parking_type, parking_price, parking_area AS parking_area_sqm,
-    note, lat, lng, community_name
-"""
-
-
+# ── 篩選/查詢委派至 search_area 模組 ─────────────────────────────────────────
 def _search_by_community_name(community_name: str, filters: dict, limit: int) -> list:
-    """直接用 community_name 索引查詢 DB（回傳原始 row dict）"""
-    params = [community_name]
-    filter_clauses = _build_filter_where(filters, params)
-    where_sql = "community_name = ?" + (" AND " + " AND ".join(filter_clauses) if filter_clauses else "")
-    sql = f"SELECT {SELECT_COLS} FROM land_transaction WHERE {where_sql} ORDER BY transaction_date DESC LIMIT ?"
-    params.append(limit)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
-    conn.close()
-    return rows
+    """直接用 community_name 索引查詢 DB（委派至 search_area 模組）"""
+    return _search_by_community_name_db(community_name, filters, limit, db_path=DB_PATH)
 
 
 def parse_filters_from_request() -> dict:
@@ -468,25 +408,7 @@ def api_search_area():
     filters = parse_filters_from_request()
 
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        where_clauses = [
-            "lat BETWEEN ? AND ?",
-            "lng BETWEEN ? AND ?",
-            "lat IS NOT NULL",
-            "lng IS NOT NULL",
-        ]
-        params = [south, north, west, east]
-        where_clauses.extend(_build_filter_where(filters, params))
-        where_sql = " AND ".join(where_clauses)
-        sql = f"SELECT {SELECT_COLS} FROM land_transaction WHERE {where_sql} ORDER BY transaction_date DESC LIMIT ?"
-        params.append(limit)
-
-        cursor.execute(sql, params)
-        rows = [dict(r) for r in cursor.fetchall()]
-        conn.close()
+        rows = _search_area_db(south, north, west, east, filters, limit, db_path=DB_PATH)
 
         # batch OSM if needed
         osm_cache = batch_osm_geocode(rows, geocoder_engine) if location_mode == "osm" else None
