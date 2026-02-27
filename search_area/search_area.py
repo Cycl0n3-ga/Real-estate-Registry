@@ -43,9 +43,12 @@ def build_filter_where(filters: dict, params: list) -> list:
     """
     clauses = []
     if filters.get("building_types"):
-        placeholders = ",".join(["?"] * len(filters["building_types"]))
-        clauses.append(f"building_type IN ({placeholders})")
-        params.extend(filters["building_types"])
+        # 用 LIKE 模糊比對，讓 "住宅大樓" 能匹配 "住宅大樓(11層含以上有電梯)"
+        like_parts = []
+        for bt in filters["building_types"]:
+            like_parts.append("building_type LIKE ?")
+            params.append(f"%{bt}%")
+        clauses.append("(" + " OR ".join(like_parts) + ")")
     if filters.get("rooms"):
         placeholders = ",".join(["?"] * len(filters["rooms"]))
         clauses.append(f"rooms IN ({placeholders})")

@@ -323,12 +323,20 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 /* ========== 建案自動建議 ========== */
 .autocomplete-wrap{position:relative}
 .autocomplete-list{
-  position:absolute;top:100%;left:0;right:60px;z-index:1200;
-  background:#fff;border:1px solid var(--border);border-top:none;
-  border-radius:0 0 8px 8px;max-height:280px;overflow-y:auto;
-  box-shadow:0 4px 16px rgba(0,0,0,.12);display:none;
+  position:fixed;z-index:2000;
+  background:#fff;border:1px solid var(--border);
+  border-radius:8px;max-height:280px;overflow-y:auto;
+  box-shadow:0 4px 20px rgba(0,0,0,.18);display:none;
 }
 .autocomplete-list.show{display:block}
+/* ========== Marker 彈跳動畫 ========== */
+@keyframes markerBounce{
+  0%,100%{transform:translateY(0) scale(1)}
+  25%{transform:translateY(-14px) scale(1.08)}
+  55%{transform:translateY(-6px) scale(1.03)}
+  75%{transform:translateY(-2px)}
+}
+.marker-bounce{animation:markerBounce .65s ease;animation-fill-mode:both}
 .autocomplete-item{
   padding:8px 12px;cursor:pointer;font-size:13px;
   border-bottom:1px solid #f0f0f0;transition:background .1s;
@@ -476,7 +484,7 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
     <div style="font-size:10px;color:#999;margin-top:2px">預設隱藏僅有地號的交易紀錄</div>
   </div>
   <div class="settings-group">
-    <div class="settings-group-title">�📍 自動精確定位</div>
+    <div class="settings-group-title">��📍 自動精確定位</div>
     <div style="font-size:11px;color:var(--text2);line-height:1.6">
       放大到 16 級以上自動使用 OSM 精確座標<br>
       其他縮放使用 DB 建案座標（較快）
@@ -728,6 +736,7 @@ function isLotAddress(addr){
 // Header 區域篩選
 function applyHeaderFilters(){
   if(lastSearchType === 'area') doAreaSearch();
+  else if(lastSearchType === 'keyword') doSearch();
 }
 function getHeaderFilterParams(){
   let p = '';
@@ -957,12 +966,14 @@ async function fetchAcResults(kw){
     if(data.success && data.results && data.results.length > 0){
       _acResults = data.results;
       _acIdx = -1;
+      positionAcList(); // fixed 定位
       renderAcList();
       document.getElementById('acList').classList.add('show');
     } else {
       hideAcList();
     }
   } catch(e){
+    console.error('com_match error:', e);
     hideAcList();
   }
 }
@@ -997,6 +1008,35 @@ function hideAcList(){
   document.getElementById('acList').classList.remove('show');
   _acResults = [];
   _acIdx = -1;
+}
+
+// 定位下拉列表到輸入框正下方（fixed 定位，避開 overflow:hidden 裁切）
+function positionAcList(){
+  const input = document.getElementById('searchInput');
+  const list = document.getElementById('acList');
+  const rect = input.getBoundingClientRect();
+  list.style.left = rect.left + 'px';
+  list.style.top = (rect.bottom + 2) + 'px';
+  list.style.width = (rect.right - rect.left + 60) + 'px'; // 含搜尋按鈕寬度
+}
+
+// hover 交易卡片 → 地圖移動 + marker 彈跳
+function hoverTx(idx){
+  const tx = txData[idx];
+  if(!tx || !tx.lat || !tx.lng) return;
+  // 輕移地圖（不縮放）
+  map.panTo([tx.lat, tx.lng], {animate:true, duration:0.25});
+  // 找對應 marker 彈跳
+  markerClusterGroup.eachLayer(layer => {
+    if(layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)){
+      const el = layer.getElement ? layer.getElement() : null;
+      if(el){
+        el.classList.remove('marker-bounce');
+        void el.offsetWidth; // trigger reflow
+        el.classList.add('marker-bounce');
+      }
+    }
+  });
 }
 
 // 點擊外部關閉
@@ -1254,7 +1294,7 @@ function renderTxCard(tx, idx, inGroup){
     ? `<span class="tx-parking-tag">🚗 含車位${tx.parking_price > 0 ? ' ' + fmtWan(tx.parking_price) : ''}</span>`
     : '';
 
-  return `<div class="tx-card${isActive?' active':''}${priceClass}${specialCls}" onclick="selectTx(${idx})" data-idx="${idx}">
+  return `<div class="tx-card${isActive?' active':''}${priceClass}${specialCls}" onclick="selectTx(${idx})" onmouseenter="hoverTx(${idx})" data-idx="${idx}">
     ${colorDot}
     <div class="tx-addr" title="${escAttr(tx.address)}">${escHtml(tx.address)}${specialBadge}</div>
     ${cnRow}
@@ -1399,7 +1439,7 @@ function buildGroups(){
     }
     if(!raw[key]){
       raw[key] = {
-        label: preciseMode ? stripCityJS(baseAddress(tx.address)) : (tx.community_name || stripCityJS(baseAddress(tx.address))),
+        label: tx.community_name || stripCityJS(baseAddress(tx.address)), // 始終優先顯示建案名
         communityName: tx.community_name || '',
         items: [], lats: [], lngs: [],
         prices: [], unitPrices: [],
@@ -1822,6 +1862,8 @@ function loadSettings(){
 document.addEventListener('DOMContentLoaded', () => {
   loadSettings();
   initMap();
+  // 視窗大小變更時隱藏下拉列表（fixed 定位需要重新計算）
+  window.addEventListener('resize', hideAcList);
   // 手機：點擊地圖時自動收合側欄
   if(window.innerWidth <= 768){
     map.on('click', () => {
