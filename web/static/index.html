@@ -161,7 +161,7 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 
 /* ── 交易卡片（改善版 v2） ─────────────────────── */
 .tx-card{
-  padding:10px 12px 10px 15px;border-bottom:1px solid #ebebeb;cursor:pointer;
+  padding:10px 12px 10px 24px;border-bottom:1px solid #ebebeb;cursor:pointer;
   transition:background .15s;display:grid;
   grid-template-columns:1fr auto;grid-template-rows:auto auto auto;
   gap:2px 12px;align-items:start;
@@ -299,6 +299,36 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 .settings-overlay{position:fixed;inset:0;background:rgba(0,0,0,.15);z-index:1150;display:none}
 .settings-overlay.show{display:block}
 
+/* ========== Header 區域篩選 ========== */
+.header-filters{
+  display:none;gap:4px;align-items:center;margin-left:8px;
+}
+.header-filters.show{display:flex}
+.header-filters select,.header-filters input{
+  padding:4px 8px;border:none;border-radius:14px;font-size:11px;
+  background:rgba(255,255,255,.2);color:#fff;outline:none;
+  cursor:pointer;
+}
+.header-filters select option{color:#333;background:#fff}
+.header-filters input{width:80px;text-align:center}
+.header-filters input::placeholder{color:rgba(255,255,255,.6)}
+.header-filters .hf-label{font-size:10px;color:rgba(255,255,255,.7);white-space:nowrap}
+.header-filters .hf-apply{
+  padding:4px 10px;border:1px solid rgba(255,255,255,.5);border-radius:14px;
+  background:rgba(255,255,255,.15);color:#fff;font-size:11px;cursor:pointer;
+  font-weight:600;transition:.2s;
+}
+.header-filters .hf-apply:hover{background:rgba(255,255,255,.3)}
+
+/* ========== Hover 色彩指示 ========== */
+.tx-color-dot{
+  position:absolute;left:2px;top:50%;transform:translateY(-50%);
+  width:18px;height:18px;border-radius:50%;opacity:0;
+  transition:opacity .15s;
+  pointer-events:none;
+}
+.tx-card:hover .tx-color-dot{opacity:1}
+
 /* ========== 快速篩選 ========== */
 .quick-filters{
   display:flex;gap:4px;padding:6px 12px;border-bottom:1px solid var(--border);
@@ -318,6 +348,8 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
   .hamburger{display:flex;align-items:center;justify-content:center;width:38px;height:38px}
   .header .logo{font-size:16px}
   .header .unit-toggle button{padding:4px 10px;font-size:12px}
+  .header-filters{flex-wrap:wrap}
+  .header-filters select,.header-filters input{font-size:10px;padding:3px 6px}
   .sidebar{width:100%;transform:translateX(-100%)}
   .sidebar.open{transform:translateX(0)}
   .map-wrap{left:0}
@@ -349,6 +381,21 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
   <div class="unit-toggle" style="margin-left:auto">
     <button id="btnPing" class="active" onclick="setUnit('ping')">坪</button>
     <button id="btnSqm" onclick="setUnit('sqm')">m²</button>
+  </div>
+  <div class="header-filters" id="headerFilters">
+    <span class="hf-label">篩選:</span>
+    <select id="hfBuildType" title="建物型態">
+      <option value="">全部類型</option>
+      <option value="住宅大樓">大樓</option>
+      <option value="華廈">華廈</option>
+      <option value="公寓">公寓</option>
+      <option value="透天厝">透天</option>
+      <option value="套房">套房</option>
+    </select>
+    <input id="hfYearMin" type="number" placeholder="民國起" min="80" max="120" title="民國年起始">
+    <span class="hf-label">~</span>
+    <input id="hfYearMax" type="number" placeholder="民國迄" min="80" max="120" title="民國年結束">
+    <button class="hf-apply" onclick="applyHeaderFilters()">套用</button>
   </div>
   <button class="settings-btn" onclick="toggleSettings()" title="圓圈顯示設定">⚙️</button>
 </div>
@@ -397,7 +444,14 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
     </div>
   </div>
   <div class="settings-group">
-    <div class="settings-group-title">📍 自動精確定位</div>
+    <div class="settings-group-title">� 顯示設定</div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+      <input type="checkbox" id="sShowLotAddr" onchange="applySettings()"> 顯示地號/小段交易
+    </label>
+    <div style="font-size:10px;color:#999;margin-top:2px">預設隱藏僅有地號的交易紀錄</div>
+  </div>
+  <div class="settings-group">
+    <div class="settings-group-title">�📍 自動精確定位</div>
     <div style="font-size:11px;color:var(--text2);line-height:1.6">
       放大到 16 級以上自動使用 OSM 精確座標<br>
       其他縮放使用 DB 建案座標（較快）
@@ -536,7 +590,8 @@ let locationCircle = null;
 let lastSearchType = 'none'; // 'keyword' | 'area' | 'none'
 let markerSettings = {
   outerMode:'total_price', innerMode:'unit_price', contentMode:'recent2yr',
-  unitThresholds:[20,40,70], totalThresholds:[500,1500,3000], osmZoom:16
+  unitThresholds:[20,40,70], totalThresholds:[500,1500,3000], osmZoom:16,
+  showLotAddr:false
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -632,6 +687,29 @@ function setUnit(u){
 
 function getLocationMode(){
   return map && map.getZoom() >= markerSettings.osmZoom ? 'osm' : 'db';
+}
+
+// 判斷是否為地號/小段地址
+function isLotAddress(addr){
+  if(!addr) return false;
+  return /地號/.test(addr) || /^\d+[-\d]*地號/.test(addr) || (/小段/.test(addr) && !/路|街|巷|弄|號/.test(addr));
+}
+
+// Header 區域篩選
+function applyHeaderFilters(){
+  if(lastSearchType === 'area') doAreaSearch();
+}
+function getHeaderFilterParams(){
+  let p = '';
+  const bt = document.getElementById('hfBuildType').value;
+  if(bt) p += '&building_type=' + encodeURIComponent(bt);
+  const yMin = document.getElementById('hfYearMin').value.trim();
+  const yMax = document.getElementById('hfYearMax').value.trim();
+  if(yMin || yMax){
+    const yr = (yMin||'') + '-' + (yMax||'');
+    p += '&year=' + encodeURIComponent(yr);
+  }
+  return p;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -836,7 +914,7 @@ async function doAreaSearch(){
   results.innerHTML = '<div class="loading">🔍 搜尋此區域成交紀錄…</div>';
 
   const limitVal = document.getElementById('limitSelect').value;
-  const url = `/api/search_area?south=${bounds.getSouth()}&north=${bounds.getNorth()}&west=${bounds.getWest()}&east=${bounds.getEast()}&limit=${limitVal}&location_mode=${getLocationMode()}` + getFilterParams();
+  const url = `/api/search_area?south=${bounds.getSouth()}&north=${bounds.getNorth()}&west=${bounds.getWest()}&east=${bounds.getEast()}&limit=${limitVal}&location_mode=${getLocationMode()}` + getFilterParams() + getHeaderFilterParams();
 
   try{
     const resp = await fetch(url);
@@ -870,6 +948,12 @@ async function doAreaSearch(){
 // ═══════════════════════════════════════════════════════════════
 function handleSearchResult(data, fitBounds = true){
   txData = data.transactions || [];
+
+  // 地號/小段過濾
+  if(!markerSettings.showLotAddr){
+    txData = txData.filter(tx => !isLotAddress(tx.address_raw || tx.address || ''));
+  }
+
   if(txData.length === 0){
     document.getElementById('results').innerHTML = '<div class="empty">😢 沒有找到符合條件的資料</div>';
     document.getElementById('summaryBar').style.display = 'none';
@@ -881,7 +965,18 @@ function handleSearchResult(data, fitBounds = true){
   window._searchType = data.search_type || 'address';
   window._summary = data.summary || {};
   communitySummaries = data.community_summaries || {};
-  collapsedCommunities = {};
+
+  // 搜此區域時建案預設折疊
+  if(data.search_type === 'area'){
+    collapsedCommunities = {};
+    const cNames = [...new Set(txData.map(tx => tx.community_name).filter(Boolean))];
+    cNames.forEach(cn => { collapsedCommunities[cn] = true; });
+    // 顯示 header 區域篩選
+    document.getElementById('headerFilters').classList.add('show');
+  } else {
+    collapsedCommunities = {};
+    document.getElementById('headerFilters').classList.remove('show');
+  }
 
   sortData(currentSort);
   renderResults();
@@ -905,6 +1000,8 @@ function renderResults(){
   const noComItems = [];
 
   txData.forEach((tx, i) => {
+    // 過濾地號地址
+    if(!markerSettings.showLotAddr && isLotAddress(tx.address_raw || tx.address || '')) return;
     const cn = tx.community_name || '';
     if(cn){
       if(!(cn in communityMap)){
@@ -985,12 +1082,25 @@ function renderTxCard(tx, idx, inGroup){
   const isActive = idx === activeCardIdx;
   const cn = tx.community_name || '';
 
+  // 跳過地號交易
+  if(!markerSettings.showLotAddr && isLotAddress(tx.address_raw || tx.address || '')) return '';
+
   // 根據單價決定色條樣式
   const upWan = (tx.unit_price_ping||0) / 10000;
   let priceClass = '';
   if(upWan > 100) priceClass = ' price-high';
   else if(upWan > 50) priceClass = ' price-mid';
   else if(upWan > 0) priceClass = ' price-low';
+
+  // hover 色彩指示圓點
+  const avgPriceW = (tx.price||0)/10000;
+  const avgUnitW = upWan;
+  const dotOuter = getColorForMode(markerSettings.outerMode, avgPriceW, avgUnitW);
+  const dotInner = getColorForMode(markerSettings.innerMode, avgPriceW, avgUnitW);
+  const colorDot = `<svg class="tx-color-dot" width="18" height="18" viewBox="0 0 18 18">
+    <circle cx="9" cy="9" r="8" fill="${dotOuter}" stroke="#fff" stroke-width="1.5"/>
+    <circle cx="9" cy="9" r="5" fill="${dotInner}"/>
+  </svg>`;
 
   // 建案標籤：非群組內永遠顯示；群組內也顯示（較小樣式）
   const cnTag = cn
@@ -1005,6 +1115,7 @@ function renderTxCard(tx, idx, inGroup){
     : '';
 
   return `<div class="tx-card${isActive?' active':''}${priceClass}${specialCls}" onclick="selectTx(${idx})" data-idx="${idx}">
+    ${colorDot}
     <div class="tx-addr" title="${escAttr(tx.address)}">${escHtml(tx.address)}${specialBadge}</div>
     ${cnRow}
     <div class="tx-detail-row">
@@ -1114,7 +1225,11 @@ function baseAddress(addr){
 
 function stripCityJS(addr){
   if(!addr) return '';
-  return addr.replace(/^(?:(?:台|臺)(?:北|中|南|東)市|(?:新北|桃園|高雄|基隆|新竹|嘉義)[市縣]|.{2,3}縣)/, '');
+  // 移除縣市
+  let s = addr.replace(/^(?:(?:台|臺)(?:北|中|南|東)市|(?:新北|桃園|高雄|基隆|新竹|嘉義)[市縣]|.{2,3}縣)/, '');
+  // 移除行政區 (XX區/鄉/鎮/市)
+  s = s.replace(/^[\u4e00-\u9fff]{1,4}[區鄉鎮市]/, '');
+  return s;
 }
 
 /**
@@ -1129,6 +1244,8 @@ function buildGroups(){
   const raw = {};
   txData.forEach((tx, idx) => {
     if(!tx.lat || !tx.lng) return;
+    // 過濾地號地址
+    if(!markerSettings.showLotAddr && isLotAddress(tx.address_raw || tx.address || '')) return;
     let key;
     if(tx.community_name){
       key = 'c:' + tx.community_name;
@@ -1520,6 +1637,7 @@ function applySettings(){
     parseFloat(document.getElementById('sTotalT3').value) || 3000
   ];
   markerSettings.osmZoom = parseInt(document.getElementById('sOsmZoom').value) || 16;
+  markerSettings.showLotAddr = document.getElementById('sShowLotAddr').checked;
   // 同步紅色門檻顯示
   document.getElementById('sUnitT3r').value = markerSettings.unitThresholds[2];
   document.getElementById('sTotalT3r').value = markerSettings.totalThresholds[2];
@@ -1548,6 +1666,7 @@ function loadSettings(){
     document.getElementById('sTotalT3').value = tt[2];
     document.getElementById('sTotalT3r').value = tt[2];
     document.getElementById('sOsmZoom').value = markerSettings.osmZoom || 16;
+    document.getElementById('sShowLotAddr').checked = !!markerSettings.showLotAddr;
   }catch(e){}
 }
 
