@@ -108,12 +108,15 @@ def safe_float(val, default=None):
     if val is None or val == '':
         return default
     if isinstance(val, (int, float)):
-        return float(val)
+        f = float(val)
+        return default if math.isnan(f) or math.isinf(f) else f
     try:
-        return float(val)
+        f = float(val)
+        return default if math.isnan(f) or math.isinf(f) else f
     except (ValueError, TypeError):
         try:
-            return float(str(val).replace(',', ''))
+            f = float(str(val).replace(',', ''))
+            return default if math.isnan(f) or math.isinf(f) else f
         except (ValueError, TypeError):
             return default
 
@@ -261,8 +264,8 @@ def clean_trans_addr(addr_raw):
 
 
 def norm_addr_simple(addr):
-    """簡單正規化: 全形→半形、臺→台、去空白"""
-    return fullwidth_to_halfwidth(addr or '').replace('臺', '台').replace(' ', '')
+    """正規化地址用於去重: 全形→半形、臺→台、中文數字→阿拉伯、段名統一、去空白"""
+    return normalize_address(addr or '').replace(' ', '')
 
 
 def strip_city(addr):
@@ -641,10 +644,10 @@ class LandDataDB:
         if len(self._insert_batch) >= self.BATCH_SIZE:
             self._flush_inserts()
 
-    def _try_enrich(self, row_id: int, new_rec: dict) -> list:
+    def _try_enrich(self, row_id: int, new_rec: dict) -> dict:
         """
         嘗試用新資料補充既有記錄的空欄位。
-        回傳補充的欄位名列表 (空列表=沒更新)。
+        回傳 {欄位: 新值} dict (空 dict = 沒更新)。
         """
         # 讀取既有欄位
         cols_to_check = [col for col, _ in ENRICH_FIELDS]
@@ -655,14 +658,14 @@ class LandDataDB:
             (row_id,)
         ).fetchone()
         if not row:
-            return False
+            return {}
 
         updates = {}
         for i, (col_name, is_empty) in enumerate(ENRICH_FIELDS):
             current_val = row[i]
             if is_empty(current_val):
                 new_val = new_rec.get(col_name)
-                if new_val is not None and new_val != '' and new_val != 0:
+                if new_val is not None and new_val != '':
                     updates[col_name] = new_val
 
         if not updates:
@@ -1147,13 +1150,6 @@ class LandDataDB:
         log_print(f'  有經緯度:      {has_geo:,} ({pct(has_geo):.1f}%)')
         log_print(f'  有社區名:      {has_comm:,} ({pct(has_comm):.1f}%)')
         log_print(f'  資料庫大小:    {db_size:.1f} MB')
-        print(f'\n📦 資料庫總覽:')
-        print(f'  總筆數:        {total:,}')
-        print(f'  有縣市名:      {has_city:,} ({pct(has_city):.1f}%)')
-        print(f'  地址解析成功:  {has_street:,} ({pct(has_street):.1f}%)')
-        print(f'  有經緯度:      {has_geo:,} ({pct(has_geo):.1f}%)')
-        print(f'  有社區名:      {has_comm:,} ({pct(has_comm):.1f}%)')
-        print(f'  資料庫大小:    {db_size:.1f} MB')
 
     def reset_stats(self):
         """重置本次統計 (多檔匯入時可在每檔之間呼叫)"""
