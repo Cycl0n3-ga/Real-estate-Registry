@@ -27,16 +27,7 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
   padding:0 16px;z-index:1100;gap:12px;
 }
 .header .logo{font-size:20px;font-weight:700;white-space:nowrap}
-.header .loc-toggle{
-  display:flex;gap:4px;background:rgba(255,255,255,.15);
-  border-radius:20px;padding:2px;margin-left:12px;
-}
-.header .loc-toggle button{
-  border:none;background:transparent;color:rgba(255,255,255,.7);
-  padding:5px 12px;border-radius:18px;cursor:pointer;font-size:12px;
-  transition:.2s;white-space:nowrap;
-}
-.header .loc-toggle button.active{background:#fff;color:var(--primary);font-weight:600}
+
 .header .unit-toggle{
   margin-left:auto;display:flex;gap:4px;background:rgba(255,255,255,.15);
   border-radius:20px;padding:2px;
@@ -299,6 +290,12 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 .settings-panel select{width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;margin-bottom:12px;outline:none}
 .settings-group{margin-bottom:14px}
 .settings-group-title{font-size:13px;font-weight:600;color:var(--primary);margin-bottom:6px}
+.settings-panel input[type=number]{
+  width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;
+  font-size:12px;margin-bottom:4px;outline:none;
+}
+.settings-thresholds{display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;margin-top:4px}
+.settings-thresholds label{font-size:10px;color:var(--text2)}
 .settings-overlay{position:fixed;inset:0;background:rgba(0,0,0,.15);z-index:1150;display:none}
 .settings-overlay.show{display:block}
 
@@ -320,7 +317,6 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 @media(max-width:768px){
   .hamburger{display:flex;align-items:center;justify-content:center;width:38px;height:38px}
   .header .logo{font-size:16px}
-  .header .loc-toggle button{padding:4px 8px;font-size:11px}
   .header .unit-toggle button{padding:4px 10px;font-size:12px}
   .sidebar{width:100%;transform:translateX(-100%)}
   .sidebar.open{transform:translateX(0)}
@@ -350,11 +346,7 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 <div class="header">
   <button class="hamburger" onclick="toggleSidebar()">☰</button>
   <div class="logo">🏢 良富居地產</div>
-  <div class="loc-toggle" title="位置模式：精確(OSM離線)或建案(DB)">
-    <button id="btnLocDb" class="active" onclick="setLocMode('db')">🏘️ 建案</button>
-    <button id="btnLocOsm" onclick="setLocMode('osm')">📍 精確</button>
-  </div>
-  <div class="unit-toggle">
+  <div class="unit-toggle" style="margin-left:auto">
     <button id="btnPing" class="active" onclick="setUnit('ping')">坪</button>
     <button id="btnSqm" onclick="setUnit('sqm')">m²</button>
   </div>
@@ -385,6 +377,34 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
       <option value="recent2yr">近兩年均價(排除特殊)</option>
       <option value="all">全期間均價</option>
     </select>
+  </div>
+  <div class="settings-group">
+    <div class="settings-group-title">🎨 單價色階門檻（萬/坪）</div>
+    <div class="settings-thresholds">
+      <div><label>🟢 綠 ＜</label><input type="number" id="sUnitT1" value="20" onchange="applySettings()"></div>
+      <div><label>🟡 黃 ＜</label><input type="number" id="sUnitT2" value="40" onchange="applySettings()"></div>
+      <div><label>🟠 橘 ＜</label><input type="number" id="sUnitT3" value="70" onchange="applySettings()"></div>
+      <div><label>🔴 紅 ≥</label><input type="number" id="sUnitT3r" value="70" disabled style="opacity:.5"></div>
+    </div>
+  </div>
+  <div class="settings-group">
+    <div class="settings-group-title">🎨 總價色階門檻（萬）</div>
+    <div class="settings-thresholds">
+      <div><label>🟢 綠 ＜</label><input type="number" id="sTotalT1" value="500" onchange="applySettings()"></div>
+      <div><label>🟡 黃 ＜</label><input type="number" id="sTotalT2" value="1500" onchange="applySettings()"></div>
+      <div><label>🟠 橘 ＜</label><input type="number" id="sTotalT3" value="3000" onchange="applySettings()"></div>
+      <div><label>🔴 紅 ≥</label><input type="number" id="sTotalT3r" value="3000" disabled style="opacity:.5"></div>
+    </div>
+  </div>
+  <div class="settings-group">
+    <div class="settings-group-title">📍 自動精確定位</div>
+    <div style="font-size:11px;color:var(--text2);line-height:1.6">
+      放大到 16 級以上自動使用 OSM 精確座標<br>
+      其他縮放使用 DB 建案座標（較快）
+    </div>
+    <label style="margin-top:4px;font-size:11px;display:flex;align-items:center;gap:4px">
+      <input type="number" id="sOsmZoom" value="16" min="13" max="19" style="width:50px" onchange="applySettings()"> 級以上使用精確定位
+    </label>
   </div>
   <div style="font-size:11px;color:#999;margin-top:8px;line-height:1.6">
     💡 變更後地圖自動重繪<br>
@@ -514,8 +534,10 @@ let communitySummaries = {};
 let locationMarker = null;
 let locationCircle = null;
 let lastSearchType = 'none'; // 'keyword' | 'area' | 'none'
-let locationMode = 'db'; // 'osm' | 'db'
-let markerSettings = {outerMode:'total_price', innerMode:'unit_price', contentMode:'recent2yr'};
+let markerSettings = {
+  outerMode:'total_price', innerMode:'unit_price', contentMode:'recent2yr',
+  unitThresholds:[20,40,70], totalThresholds:[500,1500,3000], osmZoom:16
+};
 
 // ═══════════════════════════════════════════════════════════════
 // 地圖初始化
@@ -608,12 +630,8 @@ function setUnit(u){
   renderSummary();
 }
 
-function setLocMode(m){
-  locationMode = m;
-  document.getElementById('btnLocDb').classList.toggle('active', m==='db');
-  document.getElementById('btnLocOsm').classList.toggle('active', m==='osm');
-  // 自動重新搜尋以取得新座標
-  if(txData.length > 0) rerunSearch();
+function getLocationMode(){
+  return map && map.getZoom() >= markerSettings.osmZoom ? 'osm' : 'db';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -786,7 +804,7 @@ async function doSearch(){
 
   const limitVal = document.getElementById('limitSelect').value;
   const url = '/api/search?keyword=' + encodeURIComponent(kw) +
-              '&limit=' + limitVal + '&location_mode=' + locationMode + getFilterParams();
+              '&limit=' + limitVal + '&location_mode=' + getLocationMode() + getFilterParams();
   try{
     const resp = await fetch(url);
     const ctype = resp.headers.get('content-type') || '';
@@ -818,7 +836,7 @@ async function doAreaSearch(){
   results.innerHTML = '<div class="loading">🔍 搜尋此區域成交紀錄…</div>';
 
   const limitVal = document.getElementById('limitSelect').value;
-  const url = `/api/search_area?south=${bounds.getSouth()}&north=${bounds.getNorth()}&west=${bounds.getWest()}&east=${bounds.getEast()}&limit=${limitVal}&location_mode=${locationMode}` + getFilterParams();
+  const url = `/api/search_area?south=${bounds.getSouth()}&north=${bounds.getNorth()}&west=${bounds.getWest()}&east=${bounds.getEast()}&limit=${limitVal}&location_mode=${getLocationMode()}` + getFilterParams();
 
   try{
     const resp = await fetch(url);
@@ -1207,17 +1225,19 @@ function buildGroups(){
 
 function getUnitPriceColor(wan){
   if(wan <= 0) return '#888';
-  if(wan >= 70) return '#b71c1c';
-  if(wan >= 40) return '#e65100';
-  if(wan >= 20) return '#f57f17';
+  const t = markerSettings.unitThresholds;
+  if(wan >= t[2]) return '#b71c1c';
+  if(wan >= t[1]) return '#e65100';
+  if(wan >= t[0]) return '#f57f17';
   return '#1b5e20';
 }
 
 function getTotalPriceColor(wan){
   if(wan <= 0) return '#888';
-  if(wan >= 3000) return '#b71c1c';
-  if(wan >= 1500) return '#e65100';
-  if(wan >= 500) return '#f57f17';
+  const t = markerSettings.totalThresholds;
+  if(wan >= t[2]) return '#b71c1c';
+  if(wan >= t[1]) return '#e65100';
+  if(wan >= t[0]) return '#f57f17';
   return '#1b5e20';
 }
 
@@ -1261,7 +1281,6 @@ function plotMarkers(fitBounds = true){
     const useRecent = markerSettings.contentMode === 'recent2yr' && g.recentCount > 0;
     const avgPrice = useRecent ? g.recentAvgPrice : (g.prices.length ? g.prices.reduce((a,b)=>a+b,0)/g.prices.length : 0);
     const avgUnitPrice = useRecent ? g.recentAvgUnitPrice : (g.unitPrices.length ? g.unitPrices.reduce((a,b)=>a+b,0)/g.unitPrices.length : 0);
-    const displayCount = useRecent ? g.recentCount : n;
 
     const avgPriceWan = avgPrice / 10000;
     const avgUnitWan = avgUnitPrice / 10000;
@@ -1287,7 +1306,7 @@ function plotMarkers(fitBounds = true){
       line2 = '';
     } else {
       line1 = priceText;
-      line2 = displayCount + '筆';
+      line2 = n + '筆';
     }
 
     const svgHtml = makeMarkerSVG({sz, outerColor, innerColor, line1, line2});
@@ -1448,62 +1467,27 @@ function locateMe(){
 function showClusterList(items){
   const container = document.getElementById('results');
 
-  // ── 近兩年中位數分析（排除特殊交易）──
-  const now = new Date();
-  const twoYearsAgo = (now.getFullYear() - 1911 - 2) * 10000; // 民國年
-  const normalRecent = items.filter(({tx}) => {
-    if(tx.is_special) return false;
-    const dr = parseInt(String(tx.date_raw||'0').replace(/\D/g,''),10);
-    return dr >= twoYearsAgo;
-  });
-
-  // 中位數
-  function median(arr){
-    if(!arr.length) return 0;
-    const s = arr.slice().sort((a,b)=>a-b);
-    const m = Math.floor(s.length/2);
-    return s.length%2 ? s[m] : (s[m-1]+s[m])/2;
-  }
-  const upArr = normalRecent.map(({tx})=>tx.unit_price_ping).filter(v=>v>0);
-  const prArr = normalRecent.map(({tx})=>tx.price).filter(v=>v>0);
-  const medianUp = median(upArr);
-  const medianPr = median(prArr);
-
   // 社區/建案分組
-  const comMap = {};
-  items.forEach(({tx}) => {
-    const cn = tx.community_name || '未知建案';
-    if(!comMap[cn]) comMap[cn] = {count:0, ups:[]};
-    comMap[cn].count++;
-    if(!tx.is_special && tx.unit_price_ping>0) comMap[cn].ups.push(tx.unit_price_ping);
+  const comGroups = {};
+  items.forEach(it => {
+    const cn = it.tx.community_name || '未知建案';
+    if(!comGroups[cn]) comGroups[cn] = [];
+    comGroups[cn].push(it);
   });
-  const comList = Object.entries(comMap).sort((a,b)=>b[1].count-a[1].count);
-
-  let analysisHtml = '';
-  if(items.length >= 2){
-    analysisHtml = `<div class="cluster-analysis">
-      <h4>📊 重疊位置分析（近兩年，排除特殊交易）</h4>
-      <div class="ca-row"><span class="ca-label">有效筆數</span><span class="ca-val">${normalRecent.length} / ${items.length} 筆</span></div>
-      <div class="ca-row"><span class="ca-label">單價中位數</span><span class="ca-val">${medianUp>0?fmtUnitPrice(medianUp, medianUp/3.30579):'N/A'}</span></div>
-      <div class="ca-row"><span class="ca-label">總價中位數</span><span class="ca-val">${medianPr>0?fmtWan(medianPr):'N/A'}</span></div>
-      <div class="ca-communities">
-        <div style="font-weight:600;margin-bottom:4px">🏠 社區/建案</div>
-        ${comList.map(([cn,st])=>{
-          const avg = st.ups.length ? Math.round(st.ups.reduce((a,b)=>a+b,0)/st.ups.length) : 0;
-          return `<div class="ca-community-item"><span>${escHtml(cn)} (${st.count}筆)</span><span>${avg>0?fmtUnitPrice(avg, avg/3.30579):'-'}</span></div>`;
-        }).join('')}
-      </div>
-    </div>`;
-  }
+  const comList = Object.entries(comGroups).sort((a,b)=>b[1].length-a[1].length);
 
   let html = `<div class="cluster-list-header">
     <span>📍 此位置 ${items.length} 筆重疊資料</span>
     <button onclick="renderResults()">↩ 返回全列表</button>
   </div>`;
-  html += analysisHtml;
-  items.forEach(({tx, origIdx}) => {
-    html += renderTxCard(tx, origIdx, false);
+
+  comList.forEach(([cn, comItems]) => {
+    html += `<div style="padding:6px 12px;background:var(--card-bg);border-bottom:1px solid var(--border);font-weight:600;font-size:13px;color:var(--text1)">🏘️ ${escHtml(cn)}（${comItems.length}筆）</div>`;
+    comItems.forEach(({tx, origIdx}) => {
+      html += renderTxCard(tx, origIdx, false);
+    });
   });
+
   container.innerHTML = html;
   if(window.innerWidth <= 768){
     document.getElementById('sidebar').classList.add('open');
@@ -1525,6 +1509,20 @@ function applySettings(){
   markerSettings.outerMode = document.getElementById('sOuter').value;
   markerSettings.innerMode = document.getElementById('sInner').value;
   markerSettings.contentMode = document.getElementById('sContent').value;
+  markerSettings.unitThresholds = [
+    parseFloat(document.getElementById('sUnitT1').value) || 20,
+    parseFloat(document.getElementById('sUnitT2').value) || 40,
+    parseFloat(document.getElementById('sUnitT3').value) || 70
+  ];
+  markerSettings.totalThresholds = [
+    parseFloat(document.getElementById('sTotalT1').value) || 500,
+    parseFloat(document.getElementById('sTotalT2').value) || 1500,
+    parseFloat(document.getElementById('sTotalT3').value) || 3000
+  ];
+  markerSettings.osmZoom = parseInt(document.getElementById('sOsmZoom').value) || 16;
+  // 同步紅色門檻顯示
+  document.getElementById('sUnitT3r').value = markerSettings.unitThresholds[2];
+  document.getElementById('sTotalT3r').value = markerSettings.totalThresholds[2];
   try{ localStorage.setItem('markerSettings', JSON.stringify(markerSettings)); }catch(e){}
   if(txData.length > 0) plotMarkers(false);
 }
@@ -1539,6 +1537,17 @@ function loadSettings(){
     document.getElementById('sOuter').value = markerSettings.outerMode;
     document.getElementById('sInner').value = markerSettings.innerMode;
     document.getElementById('sContent').value = markerSettings.contentMode;
+    const ut = markerSettings.unitThresholds || [20,40,70];
+    const tt = markerSettings.totalThresholds || [500,1500,3000];
+    document.getElementById('sUnitT1').value = ut[0];
+    document.getElementById('sUnitT2').value = ut[1];
+    document.getElementById('sUnitT3').value = ut[2];
+    document.getElementById('sUnitT3r').value = ut[2];
+    document.getElementById('sTotalT1').value = tt[0];
+    document.getElementById('sTotalT2').value = tt[1];
+    document.getElementById('sTotalT3').value = tt[2];
+    document.getElementById('sTotalT3r').value = tt[2];
+    document.getElementById('sOsmZoom').value = markerSettings.osmZoom || 16;
   }catch(e){}
 }
 

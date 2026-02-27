@@ -1,0 +1,5 @@
+# Land Transaction Query System - Dependencies
+flask>=3.0
+flask-compress>=1.15
+flask-cors>=4.0
+requests>=2.31
