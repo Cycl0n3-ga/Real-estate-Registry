@@ -1236,10 +1236,12 @@ function stripCityJS(addr){
  * 將 txData 分組：
  *   Phase 1 — 按社區名或同棟地址分組
  *   Phase 2 — 計算各組中心座標（中位數）
- *   Phase 3 — 近距離合併（≈28m Union-Find），解決不同社區/地址在同座標重疊
+ *   Phase 3 — 近距離合併（Union-Find），解決不同社區/地址在同座標重疊
+ *   精確模式（OSM zoom）— 按地址分組，不合併社區，合併半徑縮小至 5m
  * 回傳: [{label, items:[{tx, origIdx}], lats, lngs, prices, unitPrices}, ...]
  */
 function buildGroups(){
+  const preciseMode = getLocationMode() === 'osm';
   // ── Phase 1: 按社區名/地址文字分組 ──
   const raw = {};
   txData.forEach((tx, idx) => {
@@ -1247,14 +1249,18 @@ function buildGroups(){
     // 過濾地號地址
     if(!markerSettings.showLotAddr && isLotAddress(tx.address_raw || tx.address || '')) return;
     let key;
-    if(tx.community_name){
+    if(preciseMode){
+      // 精確模式：按地址分組（不以社區名歸併）
+      key = 'a:' + baseAddress(tx.address_raw || tx.address);
+    } else if(tx.community_name){
       key = 'c:' + tx.community_name;
     } else {
       key = 'a:' + baseAddress(tx.address_raw || tx.address);
     }
     if(!raw[key]){
       raw[key] = {
-        label: tx.community_name || stripCityJS(baseAddress(tx.address)),
+        label: preciseMode ? stripCityJS(baseAddress(tx.address)) : (tx.community_name || stripCityJS(baseAddress(tx.address))),
+        communityName: tx.community_name || '',
         items: [], lats: [], lngs: [],
         prices: [], unitPrices: [],
       };
@@ -1278,9 +1284,9 @@ function buildGroups(){
     g._cLng = sLng[m];
   });
 
-  // ── Phase 3: Union-Find 近距離合併（≈28m 內視為同位置）──
-  //    0.00025° ≈ 28m(lat) / 25m(lng) @ 25°N
-  const MERGE = 0.00025;
+  // ── Phase 3: Union-Find 近距離合併 ──
+  // 精確模式: 5m (0.00005°)；一般模式: 28m (0.00025°)
+  const MERGE = preciseMode ? 0.00005 : 0.00025;
   const par = Array.from({length: len}, (_, i) => i);
   function find(x){ while(par[x]!==x){ par[x]=par[par[x]]; x=par[x]; } return x; }
   for(let i = 0; i < len; i++)
