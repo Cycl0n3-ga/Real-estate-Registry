@@ -56,6 +56,7 @@ from search_area import (
     build_filter_where as _build_filter_where,
     SELECT_COLS,
 )
+from com_match import CommunityMatcher
 
 # ── Flask 設定 ────────────────────────────────────────────────────────────────
 app = Flask(__name__, static_folder="static")
@@ -91,8 +92,8 @@ DB_PATH = str(LAND_DIR / "db" / "land_data.db")
 com2addr_engine = None
 com2addr_ready = False
 geocoder_engine = None
-geocoder_ready = False
-_community_coords_cache = {}  # community_name → (lat, lng)
+geocoder_ready = Falsecom_matcher = None         # CommunityMatcher 建案模糊搜尋引擎
+com_matcher_ready = False_community_coords_cache = {}  # community_name → (lat, lng)
 _search_cache = {}             # cache_key → (result_json, timestamp)
 _CACHE_TTL = 180               # 3 分鐘快取
 
@@ -168,6 +169,20 @@ def init_geocoder():
         print(f"⚠️  TaiwanGeocoder 載入失敗: {e}")
         import traceback; traceback.print_exc()
         geocoder_ready = True
+
+
+def init_com_matcher():
+    """背景初始化建案模糊搜尋引擎"""
+    global com_matcher, com_matcher_ready
+    try:
+        print("🔍 載入 CommunityMatcher...")
+        com_matcher = CommunityMatcher(DB_PATH)
+        com_matcher_ready = True
+        print("✅ CommunityMatcher 就緒")
+    except Exception as e:
+        print(f"⚠️  CommunityMatcher 載入失敗: {e}")
+        import traceback; traceback.print_exc()
+        com_matcher_ready = True
 
 
 # ── 工具函式（本地專用，未移至 data_utils）─────────────────────────────────────
@@ -248,6 +263,7 @@ def api_search():
 
     參數:
       keyword        - 搜尋關鍵字（必要）
+      community      - 直接指定建案名稱（優先使用，跳過模糊搜尋）
       location_mode  - osm|db (預設 db)
       limit          - 回傳上限 (預設 500)
       + 篩選參數 (building_type, rooms, public_ratio, year, ping, unit_price, price)
@@ -270,9 +286,17 @@ def api_search():
     community_name = None
     search_type = "address"
 
-    # ════════════ 路徑 A: com2address — 把 keyword 當建案名搜尋 ════════════
+    # ════════════ 路徑 0: 明確指定建案名稱（前端選擇建案後直接傳入）════════════
+    specified_community = request.args.get("community", "").strip()
     com_raw_rows = []
-    if com2addr_ready and com2addr_engine:
+    if specified_community:
+        community_name = specified_community
+        search_type = "community"
+        com_raw_rows = _search_by_community_name(community_name, filters, limit)
+        print(f"🏘️  直接建案搜尋: {community_name} → {len(com_raw_rows)} 筆")
+
+    # ════════════ 路徑 A: com2address — 把 keyword 當建案名搜尋 ════════════
+    elif com2addr_ready and com2addr_engine:
         try:
             com_result = com2addr_engine.query(keyword, top_n=5)
             if com_result.get("found") and com_result.get("match_type") != "未找到":
@@ -473,9 +497,33 @@ def api_stats():
         stats.update(com2addr_engine.stats())
     stats["com2addr_ready"] = com2addr_ready
     stats["geocoder_ready"] = geocoder_ready
+    stats["com_matcher_ready"] = com_matcher_ready
+    stats["com_matcher_count"] = com_matcher.stats()["total_communities"] if com_matcher else 0
     stats["db_path"] = DB_PATH
     stats["db_exists"] = os.path.exists(DB_PATH)
     return jsonify({"success": True, **stats})
+
+
+@app.route("/api/com_match", methods=["GET"])
+def api_com_match():
+    """
+    建案名稱模糊搜尋 API
+
+    參數:
+      keyword  - 建案名稱關鍵字
+      top_n    - 回傳筆數 (預設 15)
+    """
+    keyword = request.args.get("keyword", "").strip()
+    if not keyword:
+        return jsonify({"success": False, "error": "缺少 keyword 參數"}), 400
+    if not com_matcher_ready or not com_matcher:
+        return jsonify({"success": False, "error": "建案搜尋引擎尚未就緒"}), 503
+    try:
+        top_n = min(int(request.args.get("top_n", 15)), 50)
+        results = com_matcher.search(keyword, top_n=top_n)
+        return jsonify({"success": True, "keyword": keyword, "results": results})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 
@@ -498,5 +546,8 @@ if __name__ == "__main__":
 
     t2 = threading.Thread(target=init_geocoder, daemon=True)
     t2.start()
+
+    t3 = threading.Thread(target=init_com_matcher, daemon=True)
+    t3.start()
 
     app.run(debug=False, host="0.0.0.0", port=5001)

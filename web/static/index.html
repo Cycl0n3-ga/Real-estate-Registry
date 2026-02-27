@@ -320,6 +320,31 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 }
 .header-filters .hf-apply:hover{background:rgba(255,255,255,.3)}
 
+/* ========== 建案自動建議 ========== */
+.autocomplete-wrap{position:relative}
+.autocomplete-list{
+  position:absolute;top:100%;left:0;right:60px;z-index:1200;
+  background:#fff;border:1px solid var(--border);border-top:none;
+  border-radius:0 0 8px 8px;max-height:280px;overflow-y:auto;
+  box-shadow:0 4px 16px rgba(0,0,0,.12);display:none;
+}
+.autocomplete-list.show{display:block}
+.autocomplete-item{
+  padding:8px 12px;cursor:pointer;font-size:13px;
+  border-bottom:1px solid #f0f0f0;transition:background .1s;
+  display:flex;justify-content:space-between;align-items:center;
+}
+.autocomplete-item:hover,.autocomplete-item.selected{background:#e3f0ff}
+.autocomplete-item .ac-name{font-weight:600;color:var(--text)}
+.autocomplete-item .ac-meta{font-size:11px;color:var(--text2);white-space:nowrap}
+.autocomplete-item .ac-tag{
+  display:inline-block;padding:1px 6px;border-radius:8px;
+  font-size:9px;font-weight:600;margin-left:4px;
+}
+.autocomplete-item .ac-tag.exact{background:#e8f5e9;color:#2e7d32}
+.autocomplete-item .ac-tag.contains{background:#e3f2fd;color:#1565c0}
+.autocomplete-item .ac-tag.fuzzy{background:#fff3e0;color:#e65100}
+
 /* ========== Hover 色彩指示 ========== */
 .tx-color-dot{
   position:absolute;left:2px;top:50%;transform:translateY(-50%);
@@ -470,10 +495,15 @@ html,body{height:100%;font-family:'Segoe UI','Microsoft JhengHei',sans-serif;bac
 <div class="sidebar" id="sidebar">
   <!-- Search -->
   <div class="search-box">
-    <div class="search-row">
+    <div class="search-row autocomplete-wrap">
       <input id="searchInput" type="text" placeholder="搜尋地址 / 建案名稱…" 
-             onkeydown="if(event.key==='Enter')doSearch()">
+             onkeydown="handleSearchKeydown(event)" oninput="onSearchInput()" autocomplete="off">
       <button onclick="doSearch()">搜尋</button>
+      <div class="autocomplete-list" id="acList"></div>
+    </div>
+    <div id="selectedCommunity" style="display:none;padding:4px 0;font-size:12px;color:var(--primary)">
+      <span>🏠 <b id="selComName"></b></span>
+      <button onclick="clearSelectedCommunity()" style="border:none;background:none;color:var(--red);cursor:pointer;font-size:12px;margin-left:4px">✖</button>
     </div>
     <div class="filter-toggle" onclick="toggleFilters()">
       <span id="filterArrow">▶</span> 進階篩選
@@ -870,19 +900,129 @@ function rerunSearch(){
 }
 
 // ═══════════════════════════════════════════════════════════════
+// 建案自動建議 (com_match)
+// ═══════════════════════════════════════════════════════════════
+let _acTimer = null;
+let _acIdx = -1;
+let _acResults = [];
+let _selectedCommunity = null; // 使用者選擇的建案名稱
+
+function handleSearchKeydown(e){
+  const list = document.getElementById('acList');
+  if(list.classList.contains('show') && _acResults.length > 0){
+    if(e.key === 'ArrowDown'){
+      e.preventDefault();
+      _acIdx = Math.min(_acIdx + 1, _acResults.length - 1);
+      renderAcList();
+      return;
+    }
+    if(e.key === 'ArrowUp'){
+      e.preventDefault();
+      _acIdx = Math.max(_acIdx - 1, -1);
+      renderAcList();
+      return;
+    }
+    if(e.key === 'Enter' && _acIdx >= 0){
+      e.preventDefault();
+      selectCommunity(_acResults[_acIdx].name);
+      return;
+    }
+  }
+  if(e.key === 'Escape'){
+    hideAcList();
+    return;
+  }
+  if(e.key === 'Enter') doSearch();
+}
+
+function onSearchInput(){
+  // 清除已選建案
+  if(_selectedCommunity){
+    clearSelectedCommunity();
+  }
+  
+  const kw = document.getElementById('searchInput').value.trim();
+  if(kw.length < 2){
+    hideAcList();
+    return;
+  }
+  clearTimeout(_acTimer);
+  _acTimer = setTimeout(() => fetchAcResults(kw), 250);
+}
+
+async function fetchAcResults(kw){
+  try{
+    const resp = await fetch('/api/com_match?keyword=' + encodeURIComponent(kw) + '&top_n=8');
+    const data = await resp.json();
+    if(data.success && data.results && data.results.length > 0){
+      _acResults = data.results;
+      _acIdx = -1;
+      renderAcList();
+      document.getElementById('acList').classList.add('show');
+    } else {
+      hideAcList();
+    }
+  } catch(e){
+    hideAcList();
+  }
+}
+
+function renderAcList(){
+  const list = document.getElementById('acList');
+  list.innerHTML = _acResults.map((r, i) => {
+    const tagClass = r.match_type === '精確' ? 'exact' : (r.match_type === '包含' ? 'contains' : 'fuzzy');
+    const priceWan = r.avg_price ? Math.round(r.avg_price / 10000) : 0;
+    return `<div class="autocomplete-item${i===_acIdx?' selected':''}" onclick="selectCommunity('${escAttr(r.name)}')">
+      <span class="ac-name">${escHtml(r.name)}<span class="ac-tag ${tagClass}">${r.match_type}</span></span>
+      <span class="ac-meta">${r.tx_count}筆${priceWan>0?' · 均'+priceWan+'萬':''} · ${escHtml(r.district||'')}</span>
+    </div>`;
+  }).join('');
+}
+
+function selectCommunity(name){
+  _selectedCommunity = name;
+  document.getElementById('searchInput').value = name;
+  document.getElementById('selComName').textContent = name;
+  document.getElementById('selectedCommunity').style.display = '';
+  hideAcList();
+  doSearch();
+}
+
+function clearSelectedCommunity(){
+  _selectedCommunity = null;
+  document.getElementById('selectedCommunity').style.display = 'none';
+}
+
+function hideAcList(){
+  document.getElementById('acList').classList.remove('show');
+  _acResults = [];
+  _acIdx = -1;
+}
+
+// 點擊外部關閉
+document.addEventListener('click', e => {
+  if(!e.target.closest('.autocomplete-wrap')) hideAcList();
+});
+
+// ═══════════════════════════════════════════════════════════════
 // 關鍵字搜尋
 // ═══════════════════════════════════════════════════════════════
 async function doSearch(){
   const kw = document.getElementById('searchInput').value.trim();
   if(!kw){alert('請輸入搜尋關鍵字');return;}
+  hideAcList();
 
   lastSearchType = 'keyword';
   const results = document.getElementById('results');
   results.innerHTML = '<div class="loading">🔍 搜尋中…</div>';
 
   const limitVal = document.getElementById('limitSelect').value;
-  const url = '/api/search?keyword=' + encodeURIComponent(kw) +
+  let url = '/api/search?keyword=' + encodeURIComponent(kw) +
               '&limit=' + limitVal + '&location_mode=' + getLocationMode() + getFilterParams();
+  // 有選擇建案時，直接用 community 查詢（建案優先）
+  if(_selectedCommunity){
+    url += '&community=' + encodeURIComponent(_selectedCommunity);
+  }
   try{
     const resp = await fetch(url);
     const ctype = resp.headers.get('content-type') || '';
