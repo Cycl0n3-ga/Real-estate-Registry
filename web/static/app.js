@@ -59,81 +59,40 @@ function setUnit(u) {
 
 // ── 地圖初始化 ──
 function initMap() {
-  map = L.map('map', { center: [25.033, 121.565], zoom: 13, zoomControl: false });
-
-  // 圖層切換
-  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
-  const carto = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '© CartoDB' });
-  const cartoDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '© CartoDB' });
-  carto.addTo(map);
-  L.control.layers({ '淺色地圖': carto, '標準地圖': osm, '深色地圖': cartoDark }, {}, { position: 'topright' }).addTo(map);
-
-  markerGroup = L.layerGroup().addTo(map);
+  map = L.map('map', { zoomControl: false }).setView([23.6978, 120.9605], 8);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_labels_under/{z}/{x}/{y}{r}.png', { attribution: '&copy; OpenStreetMap & CartoDB' }).addTo(map);
   markerClusterGroup = L.markerClusterGroup({
-    maxClusterRadius: 45, spiderfyOnMaxZoom: true, showCoverageOnHover: false,
-    zoomToBoundsOnClick: false,
-    spiderfyDistanceMultiplier: 2.5,
-    iconCreateFunction: c => {
-      const markers = c.getAllChildMarkers();
-      let totalCount = 0, totalPrice = 0, totalUnit = 0, validP = 0, validU = 0;
-      markers.forEach(m => {
-        const gc = m._groupCount || 1; totalCount += gc;
-        if (m._avgPrice && m._avgPrice > 0) { totalPrice += m._avgPrice * gc; validP += gc; }
-        if (m._avgUnitPrice && m._avgUnitPrice > 0) { totalUnit += m._avgUnitPrice * gc; validU += gc; }
-      });
-      const labels = markers.map(m => m._groupLabel).filter(Boolean);
-      const uniqueLabels = [...new Set(labels)];
-      const sameComm = uniqueLabels.length === 1;
-      const commLabel = sameComm ? uniqueLabels[0].substring(0, 6) : '';
-      let sz = 44;
-      if (totalCount >= 100) sz = 60; else if (totalCount >= 30) sz = 54; else if (totalCount >= 10) sz = 48;
-      const avgPriceWan = validP > 0 ? (totalPrice / validP / 10000) : 0;
-      const avgUnitWan = validU > 0 ? (totalUnit / validU / 10000) : 0;
-      // 中位數計算
-      const allUnitPrices = []; markers.forEach(m => { if (m._groupItems) m._groupItems.forEach(({ tx }) => { if (tx.unit_price_ping > 0) allUnitPrices.push(tx.unit_price_ping); }); });
-      allUnitPrices.sort((a, b) => a - b);
-      const medianUnit = allUnitPrices.length > 0 ? allUnitPrices[Math.floor(allUnitPrices.length / 2)] / 10000 : 0;
-      const outerColor = getColorForMode(markerSettings.outerMode, avgPriceWan, avgUnitWan);
-      const innerColor = getColorForMode(markerSettings.innerMode, avgPriceWan, avgUnitWan);
-      let priceText = '';
-      if (avgPriceWan >= 10000) priceText = (avgPriceWan / 10000).toFixed(1) + '億';
-      else if (avgPriceWan >= 1) priceText = avgPriceWan.toFixed(0) + '萬';
-      const line1 = priceText || totalCount + '筆';
-      const line2 = priceText ? totalCount + '筆' : '';
-      const svgHtml = makeMarkerSVG({ sz, outerColor, innerColor, line1, line2 });
-      const labelHtml = commLabel ? `<div style="margin-top:-2px;padding:1px 4px;background:rgba(255,255,255,.92);border-radius:6px;font-size:8px;font-weight:600;color:#333;white-space:nowrap;max-width:70px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08)">${commLabel}</div>` : '';
-      const totalH = commLabel ? sz + 14 : sz;
-      return L.divIcon({
-        html: `<div style="display:flex;flex-direction:column;align-items:center">${svgHtml}${labelHtml}</div>`,
-        className: 'price-marker', iconSize: [sz + 8, totalH], iconAnchor: [(sz + 8) / 2, totalH / 2]
-      });
+    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, maxClusterRadius: 80,
+    iconCreateFunction: function (cluster) {
+      const markers = cluster.getAllChildMarkers(); let total = 0, count = 0;
+      markers.forEach(m => { if (m._avgPrice > 0) { total += m._avgPrice; count++; } });
+      const avgWan = count > 0 ? (total / count) / 10000 : 0;
+      let c = '#1b5e20'; if (avgWan >= 3000) c = '#b71c1c'; else if (avgWan >= 1500) c = '#e65100'; else if (avgWan >= 500) c = '#f57f17';
+      const n = markers.reduce((acc, m) => acc + (m._groupCount || 1), 0);
+      return L.divIcon({ html: `<div style="background-color:${c};color:white;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:14px;box-shadow:0 0 0 2px rgba(255,255,255,0.8),0 4px 8px rgba(0,0,0,0.3)">${n > 99 ? '99+' : n}</div>`, className: 'custom-cluster-icon', iconSize: L.point(40, 40) });
     }
   });
-  map.addLayer(markerClusterGroup);
-  // 叢集點擊：同建案展開列表、不同建案 spiderfy
-  markerClusterGroup.on('clusterclick', function (e) {
-    const mkrs = e.layer.getAllChildMarkers();
-    const labels = mkrs.map(m => m._groupLabel).filter(Boolean);
-    const unique = [...new Set(labels)];
-    if (unique.length <= 1) {
-      // 同建案 → 展開交易列表，不放大
-      const items = []; mkrs.forEach(m => { if (m._groupItems) items.push(...m._groupItems); });
-      if (items.length > 0) showClusterList(items);
-    } else {
-      // 不同建案 → spiderfy 展開圈圈
-      e.layer.spiderfy();
-    }
-  });
-  // spiderfy 時加模糊背景
-  markerClusterGroup.on('spiderfied', () => { document.getElementById('mapBlur').classList.add('active'); });
-  markerClusterGroup.on('unspiderfied', () => { document.getElementById('mapBlur').classList.remove('active'); });
-  map.on('click', () => { document.getElementById('mapBlur').classList.remove('active'); });
-  addLegend();
 
-  // ── 搜此區域 auto-search 事件 ──
+  // ── Spiderfy Event Handlers ──
+  markerClusterGroup.on('spiderfied', (e) => {
+    e.cluster._icon.classList.add('spider-focus');
+    e.markers.forEach(m => {
+      if (m._icon) m._icon.classList.add('spider-focus');
+    });
+    document.getElementById('map').classList.add('spiderfied-active');
+  });
+
+  markerClusterGroup.on('unspiderfied', (e) => {
+    if (e.cluster._icon) e.cluster._icon.classList.remove('spider-focus');
+    e.markers.forEach(m => {
+      if (m._icon) m._icon.classList.remove('spider-focus');
+    });
+    document.getElementById('map').classList.remove('spiderfied-active');
+  });
+
+  map.addLayer(markerClusterGroup); markerGroup = L.featureGroup().addTo(map);
   map.on('moveend', onMapMoveEnd);
-  map.on('zoomend', updateAreaToggleState);
-  updateAreaToggleState();
+  addLegend();
 }
 
 // ── 篩選面板 ──
@@ -396,7 +355,7 @@ function renderResults() {
       html += `<div class="community-stats" id="cstats-${cssId(cn)}" style="${isCollapsed ? 'display:none' : ''}">
         <div class="cs-item"><span class="cs-label">📊 筆數</span><span class="cs-value">${group.items.length}</span></div>
         <div class="cs-item"><span class="cs-label">💰 均總</span><span class="cs-value">${fmtWan(stats.avg_price)}</span></div>
-        <div class="cs-item"><span class="cs-label">�� 均單</span><span class="cs-value">${stats.avg_unit_price_ping > 0 ? (stats.avg_unit_price_ping / 10000).toFixed(1) + '萬/坪' : '-'}</span></div>
+        <div class="cs-item"><span class="cs-label"> 均單</span><span class="cs-value">${stats.avg_unit_price_ping > 0 ? (stats.avg_unit_price_ping / 10000).toFixed(1) + '萬/坪' : '-'}</span></div>
         <div class="cs-item"><span class="cs-label">📐 均坪</span><span class="cs-value">${stats.avg_ping > 0 ? stats.avg_ping.toFixed(1) + '坪' : '-'}</span></div>
         <div class="cs-item"><span class="cs-label">🏗️ 公設</span><span class="cs-value" style="color:${stats.avg_ratio > 35 ? 'var(--red)' : stats.avg_ratio > 30 ? 'var(--orange)' : 'var(--green)'}">${stats.avg_ratio > 0 ? stats.avg_ratio.toFixed(1) + '%' : '-'}</span></div>
       </div>`;
@@ -479,10 +438,7 @@ function baseAddress(addr) { if (!addr) return ''; return addr.replace(/\d+樓.*
 function stripCityJS(addr) { if (!addr) return ''; let s = addr.replace(/^(?:(?:台|臺)(?:北|中|南|東)市|(?:新北|桃園|高雄|基隆|新竹|嘉義)[市縣]|.{2,3}縣)/, ''); s = s.replace(/^[\u4e00-\u9fff]{1,4}[區鄉鎮市]/, ''); return s; }
 
 function extractDistrict(tx) {
-  // 從地址中提取行政區（如信義區、大安區）
-  const addr = tx.address_raw || tx.address || '';
-  const m = addr.match(/([\u4e00-\u9fff]{1,4}[區鄉鎮市])/);
-  return m ? m[1] : (tx.district || '');
+  return tx.district || '';
 }
 
 function buildGroups() {
@@ -683,13 +639,25 @@ function showMarkerTooltip(marker, group) {
   const items = group.items || [];
   if (items.length === 0) return;
   const label = group.communityName || group.label || '';
-  // 建案完成日期 (build_date → completion_date)
+
+  // Year & floor details
+  const years = items.map(({ tx }) => tx.date_raw ? String(tx.date_raw).substring(0, 3) : '').filter(Boolean);
+  const uniqueYears = [...new Set(years)].sort();
+  const yearRange = uniqueYears.length > 0 ? (uniqueYears.length <= 2 ? uniqueYears.join('-') : uniqueYears[0] + '-' + uniqueYears[uniqueYears.length - 1]) : '-';
+  const floors = items.map(({ tx }) => tx.total_floors).filter(v => v > 0);
+  const maxFloor = floors.length > 0 ? Math.max(...floors) : 0;
+
+  // Area & Types
+  const types = [...new Set(items.map(({ tx }) => tx.building_type).filter(Boolean))];
+  const typeText = types.length > 0 ? types.slice(0, 2).join('/') : '-';
+  const pings = items.map(({ tx }) => tx.area_ping).filter(v => v > 0);
+  const avgPing = pings.length > 0 ? (pings.reduce((a, b) => a + b, 0) / pings.length).toFixed(0) : '-';
+
+  // Completion date, Materials & Uses
   const completionDates = [...new Set(items.map(({ tx }) => tx.completion_date).filter(Boolean))];
   const buildDateText = completionDates.length > 0 ? fmtBuildDate(completionDates[0]) : '-';
-  // 主要建材
   const materials = [...new Set(items.map(({ tx }) => tx.main_material).filter(Boolean))];
   const materialText = materials.length > 0 ? materials.slice(0, 2).join('/') : '-';
-  // 主要用途
   const uses = [...new Set(items.map(({ tx }) => tx.main_use).filter(Boolean))];
   const useText = uses.length > 0 ? uses.slice(0, 2).join('/') : '-';
 
@@ -697,9 +665,9 @@ function showMarkerTooltip(marker, group) {
   tip.className = 'marker-tooltip-info';
   tip.innerHTML = `
     ${label ? `<div class="mti-name">${escHtml(label)}</div>` : ''}
-    <div class="mti-row"><span>📅</span> 完工 ${buildDateText}</div>
-    <div class="mti-row"><span>🧱</span> ${escHtml(materialText)}</div>
-    <div class="mti-row"><span>🏠</span> ${escHtml(useText)}</div>
+    <div class="mti-row"><span>📅</span> 交易 ${yearRange}年 ｜ 完工 ${buildDateText}</div>
+    ${maxFloor > 0 ? `<div class="mti-row"><span>🏢</span> ${maxFloor}樓 ｜ ${escHtml(typeText)} ${escHtml(materialText)}</div>` : `<div class="mti-row"><span>🏠</span> ${escHtml(typeText)} ${escHtml(materialText)}</div>`}
+    <div class="mti-row"><span>📐</span> 均${avgPing}坪 ｜ ${escHtml(useText)}</div>
   `;
   const iconRect = marker._icon.getBoundingClientRect();
   tip.style.position = 'fixed';
@@ -772,26 +740,62 @@ function showClusterList(items) {
   if (window.innerWidth <= 768) document.getElementById('sidebar').classList.add('open');
 }
 
-// ── 設定面板 ──
-function toggleSettings() { const panel = document.getElementById('settingsPanel'), overlay = document.getElementById('settingsOverlay'), isOpen = panel.classList.contains('open'); panel.classList.toggle('open', !isOpen); overlay.classList.toggle('show', !isOpen); }
-function applySettings() {
-  markerSettings.outerMode = document.getElementById('sOuter').value; markerSettings.innerMode = document.getElementById('sInner').value; markerSettings.contentMode = document.getElementById('sContent').value;
-  markerSettings.unitThresholds = [parseFloat(document.getElementById('sUnitT1').value) || 20, parseFloat(document.getElementById('sUnitT2').value) || 40, parseFloat(document.getElementById('sUnitT3').value) || 70];
-  markerSettings.totalThresholds = [parseFloat(document.getElementById('sTotalT1').value) || 500, parseFloat(document.getElementById('sTotalT2').value) || 1500, parseFloat(document.getElementById('sTotalT3').value) || 3000];
-  markerSettings.osmZoom = parseInt(document.getElementById('sOsmZoom').value) || 16; markerSettings.showLotAddr = document.getElementById('sShowLotAddr').checked;
-  document.getElementById('sUnitT3r').value = markerSettings.unitThresholds[2]; document.getElementById('sTotalT3r').value = markerSettings.totalThresholds[2];
-  try { localStorage.setItem('markerSettings', JSON.stringify(markerSettings)); } catch (e) { }
-  if (txData.length > 0) plotMarkers(false);
+// ── 設定與控制面板 ──
+function toggleSettings() { document.getElementById('settingsPanel').classList.toggle('show'); }
+
+function updateThresh() {
+  // 處理 unit sliders
+  let um1 = parseInt(document.getElementById('unitMin').value, 10);
+  let um2 = parseInt(document.getElementById('unitMax').value, 10);
+  if (um1 >= um2) { um1 = Math.max(0, um2 - 5); document.getElementById('unitMin').value = um1; }
+  document.getElementById('vUnitMin').textContent = um1;
+  document.getElementById('vUnitMax').textContent = um2;
+
+  // 處理 total sliders
+  let tm1 = parseInt(document.getElementById('totalMin').value, 10);
+  let tm2 = parseInt(document.getElementById('totalMax').value, 10);
+  if (tm1 >= tm2) { tm1 = Math.max(0, tm2 - 100); document.getElementById('totalMin').value = tm1; }
+  document.getElementById('vTotalMin').textContent = tm1;
+  document.getElementById('vTotalMax').textContent = tm2;
+
+  markerSettings.unitThresholds = [um1, (um1 + um2) / 2, um2];
+  markerSettings.totalThresholds = [tm1, (tm1 + tm2) / 2, tm2];
+
+  if (txData.length > 0) {
+    clearTimeout(window._replotTimer);
+    window._replotTimer = setTimeout(() => { plotMarkers(false); }, 300);
+  }
 }
+
+function applySettings() {
+  markerSettings.outerMode = document.getElementById('sOuter').value;
+  markerSettings.innerMode = document.getElementById('sInner').value;
+  markerSettings.showLotAddr = document.getElementById('sShowLotAddr').checked;
+  localStorage.setItem('markerSettings', JSON.stringify(markerSettings));
+  if (txData.length > 0) plotMarkers(false);
+  else doAreaSearch();
+}
+
 function loadSettings() {
   try {
-    const saved = localStorage.getItem('markerSettings'); if (saved) { const s = JSON.parse(saved); markerSettings = { ...markerSettings, ...s }; }
-    document.getElementById('sOuter').value = markerSettings.outerMode; document.getElementById('sInner').value = markerSettings.innerMode; document.getElementById('sContent').value = markerSettings.contentMode;
-    const ut = markerSettings.unitThresholds || [20, 40, 70], tt = markerSettings.totalThresholds || [500, 1500, 3000];
-    document.getElementById('sUnitT1').value = ut[0]; document.getElementById('sUnitT2').value = ut[1]; document.getElementById('sUnitT3').value = ut[2]; document.getElementById('sUnitT3r').value = ut[2];
-    document.getElementById('sTotalT1').value = tt[0]; document.getElementById('sTotalT2').value = tt[1]; document.getElementById('sTotalT3').value = tt[2]; document.getElementById('sTotalT3r').value = tt[2];
-    document.getElementById('sOsmZoom').value = markerSettings.osmZoom || 16; document.getElementById('sShowLotAddr').checked = !!markerSettings.showLotAddr;
+    const saved = localStorage.getItem('markerSettings');
+    if (saved) {
+      const p = JSON.parse(saved);
+      Object.assign(markerSettings, p);
+    }
   } catch (e) { }
+  document.getElementById('sOuter').value = markerSettings.outerMode;
+  document.getElementById('sInner').value = markerSettings.innerMode;
+  document.getElementById('sShowLotAddr').checked = !!markerSettings.showLotAddr;
+
+  // Set slider values
+  const ut = markerSettings.unitThresholds;
+  const tt = markerSettings.totalThresholds;
+  document.getElementById('unitMin').value = ut[0] || 20;
+  document.getElementById('unitMax').value = ut[2] || 70;
+  document.getElementById('totalMin').value = tt[0] || 500;
+  document.getElementById('totalMax').value = tt[2] || 3000;
+  updateThresh(); // Update labels
 }
 
 // ── 鍵盤快捷鍵 ──

@@ -861,28 +861,21 @@ body {
   height: 100%;
 }
 
-#mapBlur {
-  position: absolute;
-  inset: 0;
-  z-index: 400;
-  background: rgba(0, 0, 0, .3);
-  backdrop-filter: blur(3px);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity .3s;
+/* ── Spiderfy Blur Effect ── */
+#map.spiderfied-active .leaflet-tile-pane,
+#map.spiderfied-active .leaflet-overlay-pane {
+  filter: blur(3px) brightness(0.6);
+  transition: all 0.3s ease;
 }
 
-#mapBlur.active {
-  opacity: 1;
+#map.spiderfied-active .leaflet-marker-icon:not(.spider-focus) {
+  opacity: 0.2;
+  filter: blur(2px) grayscale(0.8);
+  transition: all 0.3s ease;
 }
 
-/* Spiderfied markers above blur */
-.leaflet-marker-pane {
-  z-index: 600 !important;
-}
-
-.leaflet-marker-pane .leaflet-marker-icon {
-  z-index: 610 !important;
+.leaflet-marker-icon {
+  transition: opacity 0.3s, filter 0.3s;
 }
 
 /* Map controls */
@@ -1479,4 +1472,72 @@ body {
   .header .logo {
     font-size: 14px;
   }
+}
+
+/* ── Range Slider ── */
+.range-slider-wrap {
+  margin-bottom: 12px;
+}
+
+.rs-label {
+  font-size: 11px;
+  color: var(--text2);
+  margin-bottom: 6px;
+}
+
+.rs-container {
+  position: relative;
+  height: 24px;
+}
+
+.rs-container input[type="range"] {
+  position: absolute;
+  width: 100%;
+  pointer-events: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  height: 4px;
+  top: 10px;
+}
+
+/* Focus path style */
+.rs-container::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--border, #e2e8f0);
+  border-radius: 2px;
+  z-index: -1;
+}
+
+.rs-container input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  pointer-events: all;
+  width: 16px;
+  height: 16px;
+  background: var(--primary, #3b82f6);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+}
+
+.rs-container input[type="range"]::-moz-range-thumb {
+  pointer-events: all;
+  width: 16px;
+  height: 16px;
+  background: var(--primary, #3b82f6);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+  border: none;
+}
+
+.highlight-val {
+  font-weight: 700;
+  color: var(--primary);
 }
