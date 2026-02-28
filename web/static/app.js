@@ -775,21 +775,30 @@ function hideMarkerTooltip() {
   }
 }
 
+let _legendControl = null, _legendDiv = null;
+function updateLegend() {
+  if (!_legendDiv) return;
+  _legendDiv.innerHTML = `<div style="background:var(--card);padding:10px 12px;border-radius:var(--radius);box-shadow:var(--shadow-md);font-size:11px;line-height:1.8;min-width:170px;border:1px solid var(--border)">
+    <div style="font-weight:700;margin-bottom:4px;font-size:12px">🎯 雙圈色彩圖例</div>
+    <div style="font-weight:600;font-size:10px;color:var(--primary);margin-bottom:2px">● 外環＝${markerSettings.outerMode === 'unit_price' ? '單價/坪' : '總價'} ｜ ● 內圈＝${markerSettings.innerMode === 'unit_price' ? '單價/坪' : '總價'}</div>
+    <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,hsl(120,70%,35%),hsl(60,72%,40%))"></div><span>低→中（綠→黃）</span></div>
+    <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,hsl(60,72%,40%),hsl(0,75%,45%))"></div><span>中→高（黃→紅）</span></div>
+    <div style="font-size:10px;color:var(--text3);margin-top:2px">單價: ${markerSettings.unitThresholds[0]}~${markerSettings.unitThresholds[2]}萬/坪<br>總價: ${markerSettings.totalThresholds[0]}~${markerSettings.totalThresholds[2]}萬</div>
+    <div style="font-weight:600;margin-top:6px;font-size:10px;color:var(--text2)">📊 圈內＝近2年均價(排除特殊)</div>
+  </div>`;
+}
+
 function addLegend() {
-  const legend = L.control({ position: 'bottomleft' });
-  legend.onAdd = function () {
-    const div = L.DomUtil.create('div', '');
-    div.innerHTML = `<div style="background:var(--card);padding:10px 12px;border-radius:var(--radius);box-shadow:var(--shadow-md);font-size:11px;line-height:1.8;min-width:170px;border:1px solid var(--border)">
-      <div style="font-weight:700;margin-bottom:4px;font-size:12px">🎯 雙圈色彩圖例</div>
-      <div style="font-weight:600;font-size:10px;color:var(--primary);margin-bottom:2px">● 外環＝單價/坪 ｜ ● 內圈＝總價</div>
-      <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,hsl(120,70%,35%),hsl(60,72%,40%))"></div><span>低→中（綠→黃）</span></div>
-      <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,hsl(60,72%,40%),hsl(0,75%,45%))"></div><span>中→高（黃→紅）</span></div>
-      <div style="font-size:10px;color:var(--text3);margin-top:2px">單價: ${markerSettings.unitThresholds[0]}~${markerSettings.unitThresholds[2]}萬/坪<br>總價: ${markerSettings.totalThresholds[0]}~${markerSettings.totalThresholds[2]}萬</div>
-      <div style="font-weight:600;margin-top:6px;font-size:10px;color:var(--text2)">📊 圈內＝近2年均價(排除特殊)</div>
-    </div>`;
-    L.DomEvent.disableScrollPropagation(div); L.DomEvent.disableClickPropagation(div); return div;
+  if (_legendControl) return;
+  _legendControl = L.control({ position: 'bottomright' });
+  _legendControl.onAdd = function () {
+    _legendDiv = L.DomUtil.create('div', '');
+    updateLegend();
+    L.DomEvent.disableScrollPropagation(_legendDiv);
+    L.DomEvent.disableClickPropagation(_legendDiv);
+    return _legendDiv;
   };
-  legend.addTo(map);
+  _legendControl.addTo(map);
 }
 
 // ── 動態填充行政區篩選 ──
@@ -851,6 +860,8 @@ function updateThresh() {
   markerSettings.unitThresholds = [um1, (um1 + um2) / 2, um2];
   markerSettings.totalThresholds = [tm1, (tm1 + tm2) / 2, tm2];
 
+  updateLegend();
+
   if (txData.length > 0) {
     clearTimeout(window._replotTimer);
     window._replotTimer = setTimeout(() => { plotMarkers(false); }, 300);
@@ -863,6 +874,9 @@ function applySettings() {
   markerSettings.showLotAddr = document.getElementById('sShowLotAddr').checked;
   markerSettings.yearFormat = document.getElementById('sYearFormat') ? document.getElementById('sYearFormat').value : 'roc';
   localStorage.setItem('markerSettings', JSON.stringify(markerSettings));
+
+  updateLegend();
+
   if (txData.length > 0) {
     renderResults();
     plotMarkers(false);
@@ -901,6 +915,7 @@ function loadSettings() {
   document.getElementById('totalMin').value = tt[0] || 500;
   document.getElementById('totalMax').value = tt[2] || 3000;
   updateThresh(); // Update labels
+  updateLegend();
 }
 
 // ── 鍵盤快捷鍵 ──

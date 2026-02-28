@@ -1516,15 +1516,11 @@ body {
   }
 
   .map-bottom-controls {
-    bottom: 24px;
+    bottom: 30px;
     left: 10px;
     right: 10px;
     max-width: none;
     padding: 8px 10px;
-  }
-
-  .leaflet-bottom.leaflet-left {
-    bottom: 0px !important;
   }
 
   .sort-bar {
@@ -1560,7 +1556,7 @@ body {
   }
 
   .map-controls {
-    bottom: 110px;
+    bottom: 140px;
     right: 8px;
   }
 
