@@ -182,6 +182,118 @@ def arabic_to_chinese(n: int) -> list:
 
 
 # ============================================================
+# 搜尋變體產生 (供 address_match 等搜尋引擎使用)
+# ============================================================
+
+def generate_number_variants(num_str):
+    """產生數字的所有表示變體（半形/全形/中文）"""
+    variants = set()
+    normalized = fullwidth_to_halfwidth(num_str)
+    try:
+        n = int(normalized)
+    except (ValueError, TypeError):
+        n = None
+    variants.add(normalized)
+    variants.add(halfwidth_to_fullwidth(normalized))
+    if n is not None:
+        for cn in arabic_to_chinese(n):
+            variants.add(cn)
+        if 20 <= n <= 29:
+            variants.add('廿' + (CN_DIGIT_MAP[n % 10] if n % 10 else ''))
+    return [v for v in variants if v]
+
+
+def parse_address_tokens(address):
+    """解析地址字串為 token 列表 (用於產生搜尋變體)"""
+    normalized = fullwidth_to_halfwidth(address)
+    tokens = []
+    pattern = re.compile(r'(\d+|[^\d]+)')
+    raw_tokens = []
+    for m in pattern.finditer(normalized):
+        val = m.group()
+        if val.isdigit():
+            raw_tokens.append({'type': 'num', 'val': val})
+        else:
+            raw_tokens.append({'type': 'text', 'val': val})
+
+    CN_ADDR_UNIT = r'(?=[樓層號巷弄段之]|F(?:\d|$))'
+    CN_NUM_PAT = re.compile(r'([零〇一兩二三四五六七八九十百千]+)' + CN_ADDR_UNIT)
+
+    for tok in raw_tokens:
+        if tok['type'] != 'text':
+            tokens.append(tok)
+            continue
+        text = tok['val']
+        pos = 0
+        for m in CN_NUM_PAT.finditer(text):
+            start, end = m.start(), m.end()
+            cn_str = m.group(1)
+            arabic_val = chinese_numeral_to_int(cn_str)
+            if start > pos:
+                tokens.append({'type': 'text', 'val': text[pos:start]})
+            if arabic_val and arabic_val > 0:
+                tokens.append({'type': 'cn_num', 'val': cn_str, 'arabic': arabic_val})
+            else:
+                tokens.append({'type': 'text', 'val': cn_str})
+            pos = end
+        if pos < len(text):
+            tokens.append({'type': 'text', 'val': text[pos:]})
+    return tokens
+
+
+def generate_address_variants(address):
+    """產生地址搜尋變體（全形/半形/中文數字排列組合）"""
+    from itertools import product
+
+    tokens = parse_address_tokens(address)
+    candidates = []
+    for tok in tokens:
+        if tok['type'] == 'num':
+            candidates.append(generate_number_variants(tok['val']))
+        elif tok['type'] == 'cn_num':
+            vs = set()
+            vs.add(tok['val'])
+            vs.add(str(tok['arabic']))
+            vs.add(halfwidth_to_fullwidth(str(tok['arabic'])))
+            for cn in arabic_to_chinese(tok['arabic']):
+                vs.add(cn)
+            candidates.append(list(vs))
+        else:
+            candidates.append([tok['val']])
+
+    all_v = set()
+    for combo in product(*candidates):
+        all_v.add(''.join(combo))
+    all_v.add(address.strip())
+    all_v.add(halfwidth_to_fullwidth(fullwidth_to_halfwidth(address.strip())))
+    return sorted(all_v)
+
+
+# ============================================================
+# 範圍解析 (共用工具)
+# ============================================================
+
+def parse_range(s):
+    """解析範圍字串 (e.g. '20-40') → (min, max)"""
+    if not s:
+        return (None, None)
+    s = str(s).strip()
+    if '-' in s:
+        parts = s.split('-', 1)
+        try:
+            lo = float(parts[0]) if parts[0].strip() else None
+            hi = float(parts[1]) if parts[1].strip() else None
+            return (lo, hi)
+        except ValueError:
+            return (None, None)
+    try:
+        val = float(s)
+        return (val, val)
+    except ValueError:
+        return (None, None)
+
+
+# ============================================================
 # 地址正規化
 # ============================================================
 

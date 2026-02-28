@@ -13,6 +13,8 @@ search_area.py — 區域搜尋與篩選模組
 import sqlite3
 import threading
 import time
+import sys
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -20,6 +22,10 @@ from typing import Dict, List, Optional, Tuple
 SCRIPT_DIR = Path(__file__).parent
 LAND_DIR = SCRIPT_DIR.parent
 DEFAULT_DB_PATH = str(LAND_DIR / "db" / "land_data.db")
+
+# 共用模組
+sys.path.insert(0, str(LAND_DIR))
+from address_utils import parse_range
 
 PING_TO_SQM = 3.30579
 
@@ -54,25 +60,6 @@ def _get_connection(db_path: str):
     conn.execute("PRAGMA temp_store=MEMORY")
     conns[db_path] = conn
     return conn
-
-
-def parse_range(val: str) -> tuple:
-    """解析範圍字串 (e.g. '20-40') → (min, max)"""
-    if not val:
-        return None, None
-    if '-' in val:
-        parts = val.split('-', 1)
-        try:
-            lo = float(parts[0]) if parts[0].strip() else None
-            hi = float(parts[1]) if parts[1].strip() else None
-            return lo, hi
-        except ValueError:
-            return None, None
-    try:
-        v = float(val)
-        return v, v
-    except ValueError:
-        return None, None
 
 
 def parse_filters(args: dict) -> dict:

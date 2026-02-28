@@ -34,23 +34,21 @@ import sys
 import os
 import re
 import argparse
-from itertools import product
+import threading
 
 # ── 共用模組 ──────────────────────────────────────────────────────────────────
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from address_utils import (
     fullwidth_to_halfwidth,
     halfwidth_to_fullwidth,
-    chinese_numeral_to_int,
-    arabic_to_chinese,
     normalize_address,
     parse_query,
-    CHINESE_NUM_CHARS,
+    parse_range,
+    generate_address_variants,
+    generate_number_variants,
+    parse_address_tokens,
     CN_DIGIT_MAP,
 )
-
-# 向後相容別名 (供 web/server.py 等使用)
-normalize_query = lambda text: normalize_address(text, for_query=True)
 
 # ── 路徑 ─────────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -58,106 +56,8 @@ DEFAULT_DB = os.path.join(SCRIPT_DIR, '..', 'db', 'land_data.db')
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 數字變體產生 (搜尋專用)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def generate_number_variants(num_str):
-    """產生數字的所有表示變體（半形/全形/中文）"""
-    variants = set()
-    normalized = fullwidth_to_halfwidth(num_str)
-    try:
-        n = int(normalized)
-    except (ValueError, TypeError):
-        n = None
-    variants.add(normalized)
-    variants.add(halfwidth_to_fullwidth(normalized))
-    if n is not None:
-        for cn in arabic_to_chinese(n):
-            variants.add(cn)
-        if 20 <= n <= 29:
-            variants.add('廿' + (CN_DIGIT_MAP[n % 10] if n % 10 else ''))
-    return [v for v in variants if v]
-
-
-def parse_address_tokens(address):
-    """解析地址字串為 token 列表 (用於產生變體)"""
-    normalized = fullwidth_to_halfwidth(address)
-    tokens = []
-    pattern = re.compile(r'(\d+|[^\d]+)')
-    raw_tokens = []
-    for m in pattern.finditer(normalized):
-        val = m.group()
-        if val.isdigit():
-            raw_tokens.append({'type': 'num', 'val': val})
-        else:
-            raw_tokens.append({'type': 'text', 'val': val})
-
-    CN_ADDR_UNIT = r'(?=[樓層號巷弄段之]|F(?:\d|$))'
-    CN_NUM_PAT = re.compile(r'([零〇一兩二三四五六七八九十百千]+)' + CN_ADDR_UNIT)
-
-    for tok in raw_tokens:
-        if tok['type'] != 'text':
-            tokens.append(tok)
-            continue
-        text = tok['val']
-        pos = 0
-        for m in CN_NUM_PAT.finditer(text):
-            start, end = m.start(), m.end()
-            cn_str = m.group(1)
-            arabic_val = chinese_numeral_to_int(cn_str)
-            if start > pos:
-                tokens.append({'type': 'text', 'val': text[pos:start]})
-            if arabic_val and arabic_val > 0:
-                tokens.append({'type': 'cn_num', 'val': cn_str, 'arabic': arabic_val})
-            else:
-                tokens.append({'type': 'text', 'val': cn_str})
-            pos = end
-        if pos < len(text):
-            tokens.append({'type': 'text', 'val': text[pos:]})
-    return tokens
-
-
-def generate_address_variants(address):
-    """產生地址搜尋變體"""
-    tokens = parse_address_tokens(address)
-    candidates = []
-    for tok in tokens:
-        if tok['type'] == 'num':
-            candidates.append(generate_number_variants(tok['val']))
-        elif tok['type'] == 'cn_num':
-            vs = set()
-            vs.add(tok['val'])
-            vs.add(str(tok['arabic']))
-            vs.add(halfwidth_to_fullwidth(str(tok['arabic'])))
-            for cn in arabic_to_chinese(tok['arabic']):
-                vs.add(cn)
-            candidates.append(list(vs))
-        else:
-            candidates.append([tok['val']])
-
-    all_v = set()
-    for combo in product(*candidates):
-        all_v.add(''.join(combo))
-    all_v.add(address.strip())
-    all_v.add(halfwidth_to_fullwidth(fullwidth_to_halfwidth(address.strip())))
-    return sorted(all_v)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # 篩選工具
 # ═══════════════════════════════════════════════════════════════════════════════
-
-def parse_range(s):
-    if not s: return (None, None)
-    s = s.strip()
-    if '-' in s:
-        parts = s.split('-', 1)
-        lo = float(parts[0]) if parts[0].strip() else None
-        hi = float(parts[1]) if parts[1].strip() else None
-        return (lo, hi)
-    else:
-        val = float(s)
-        return (val, val)
 
 SORT_OPTIONS = {
     'date':         'transaction_date DESC, id DESC',
@@ -173,21 +73,20 @@ SORT_OPTIONS = {
 # 搜尋引擎
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _build_computed_cols():
-    """CTE 計算欄位 SQL"""
-    return """
-        CASE WHEN building_area > 0
-             THEN ROUND(building_area / 3.30579, 1) ELSE NULL END AS ping,
-        CASE WHEN building_area > 0 AND main_area > 0 AND building_area > main_area
-             THEN ROUND(
-                    (building_area - COALESCE(main_area,0) - COALESCE(attached_area,0) - COALESCE(balcony_area,0))
-                    / building_area * 100, 1)
-             ELSE NULL END AS public_ratio,
-        CASE WHEN building_area > 0 AND total_price > 0
-             THEN ROUND(total_price / 10000.0 / (building_area / 3.30579), 1)
-             ELSE NULL END AS unit_price_per_ping,
-        CAST(SUBSTR(transaction_date, 1, LENGTH(transaction_date) - 4) AS INTEGER) AS roc_year
-    """
+# 計算欄位 SQL（模組級常量，避免每次呼叫重建）
+_COMPUTED_COLS_SQL = """
+    CASE WHEN building_area > 0
+         THEN ROUND(building_area / 3.30579, 1) ELSE NULL END AS ping,
+    CASE WHEN building_area > 0 AND main_area > 0 AND building_area > main_area
+         THEN ROUND(
+                (building_area - COALESCE(main_area,0) - COALESCE(attached_area,0) - COALESCE(balcony_area,0))
+                / building_area * 100, 1)
+         ELSE NULL END AS public_ratio,
+    CASE WHEN building_area > 0 AND total_price > 0
+         THEN ROUND(total_price / 10000.0 / (building_area / 3.30579), 1)
+         ELSE NULL END AS unit_price_per_ping,
+    CAST(SUBSTR(transaction_date, 1, LENGTH(transaction_date) - 4) AS INTEGER) AS roc_year
+"""
 
 
 def _build_filter_sql(filters, params):
@@ -240,6 +139,7 @@ def search_structured(conn, parsed, filters, sort_by, limit):
     if not street:
         return []
 
+    computed = _COMPUTED_COLS_SQL
     district = parsed.get('district')
     lane = parsed.get('lane', '')
     alley = parsed.get('alley', '')
@@ -301,7 +201,6 @@ def search_structured(conn, parsed, filters, sort_by, limit):
     # Level 6: 僅 street
     levels.append((['street = ?'], [street]))
 
-    computed = _build_computed_cols()
     order_sql = SORT_OPTIONS.get(sort_by, SORT_OPTIONS['date'])
 
     for where_parts, base_params in levels:
@@ -335,7 +234,7 @@ def search_structured(conn, parsed, filters, sort_by, limit):
 
 def search_fts(conn, query, filters, sort_by, limit):
     """策略 2: FTS5 全文搜尋"""
-    computed = _build_computed_cols()
+    computed = _COMPUTED_COLS_SQL
     order_sql = SORT_OPTIONS.get(sort_by, SORT_OPTIONS['date'])
     params = [f'"{query}"']
 
@@ -366,7 +265,7 @@ def search_fts(conn, query, filters, sort_by, limit):
 
 def search_like(conn, variants, filters, sort_by, limit):
     """策略 3: LIKE 後備搜尋 (限制變體數量避免全表掃描)"""
-    computed = _build_computed_cols()
+    computed = _COMPUTED_COLS_SQL
     order_sql = SORT_OPTIONS.get(sort_by, SORT_OPTIONS['date'])
 
     # 限制最多 8 個變體，避免大量 OR 導致效能問題
@@ -396,31 +295,30 @@ def search_like(conn, variants, filters, sort_by, limit):
     return [dict(r) for r in cursor.fetchall()]
 
 
-def _get_connection(db_path):
-    """建立已優化的 SQLite 連線"""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA cache_size=-50000')   # 50MB cache
-    conn.execute('PRAGMA mmap_size=268435456') # 256MB mmap
-    conn.execute('PRAGMA query_only=ON')       # 唯讀提示，避免 journal 開銷
-    return conn
+# 執行緒安全連線快取 (per-thread，避免跨執行緒存取 SQLite 連線)
+_local = threading.local()
 
-
-# 模組級連線快取 (同一 db_path 共用)
-_conn_cache = {}
 
 def _get_cached_connection(db_path):
-    """取得快取連線（避免重複開關連線）"""
+    """取得快取連線（per-thread，避免重複開關連線）"""
     real_path = os.path.realpath(db_path)
-    conn = _conn_cache.get(real_path)
+    conns = getattr(_local, 'conns', None)
+    if conns is None:
+        _local.conns = {}
+        conns = _local.conns
+    conn = conns.get(real_path)
     if conn is not None:
         try:
             conn.execute('SELECT 1')
             return conn
         except sqlite3.Error:
-            _conn_cache.pop(real_path, None)
-    conn = _get_connection(db_path)
-    _conn_cache[real_path] = conn
+            conns.pop(real_path, None)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA cache_size=-50000')   # 50MB cache
+    conn.execute('PRAGMA mmap_size=268435456') # 256MB mmap
+    conn.execute('PRAGMA query_only=ON')       # 唯讀提示，避免 journal 開銷
+    conns[real_path] = conn
     return conn
 
 
@@ -456,7 +354,7 @@ def search_address(address, db_path=DEFAULT_DB, filters=None,
 
         # 策略 2: FTS5
         if not rows:
-            normalized = normalize_query(address)
+            normalized = normalize_address(address, for_query=True)
             rows = search_fts(conn, normalized, filters, sort_by, limit)
             method = 'FTS5 全文'
 
@@ -469,7 +367,9 @@ def search_address(address, db_path=DEFAULT_DB, filters=None,
     except sqlite3.Error:
         # 連線可能已失效，清除快取
         real_path = os.path.realpath(db_path)
-        _conn_cache.pop(real_path, None)
+        conns = getattr(_local, 'conns', None)
+        if conns:
+            conns.pop(real_path, None)
         raise
 
     if show_sql:
@@ -478,7 +378,7 @@ def search_address(address, db_path=DEFAULT_DB, filters=None,
 
     return {
         'query': address,
-        'variants': generate_address_variants(address) if not rows or method != '結構化索引' else [],
+        'variants': generate_address_variants(address),
         'parsed': parsed,
         'method': method,
         'filters': filters,
