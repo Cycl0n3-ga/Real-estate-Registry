@@ -89,7 +89,7 @@ function initMap() {
 
     const labels = markers.map(m => m._groupLabel).filter(Boolean);
     const uniqueLabels = [...new Set(labels)];
-    const commLabel = uniqueLabels.length === 1 ? uniqueLabels[0].substring(0, 6) : '';
+    const commLabel = uniqueLabels.length === 1 ? uniqueLabels[0].substring(0, 6) : (uniqueLabels.length > 1 ? uniqueLabels.length + ' 個建案' : '');
     const labelHtml = commLabel ? `<div style="margin-top:-2px;padding:1px 4px;background:rgba(255,255,255,.92);border-radius:6px;font-size:8px;font-weight:600;color:#333;white-space:nowrap;max-width:70px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08)">${commLabel}</div>` : '';
 
     const totalH = commLabel ? sz + 14 : sz;
@@ -102,13 +102,13 @@ function initMap() {
   };
 
   markerClusterGroup = L.markerClusterGroup({
-    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, maxClusterRadius: 40,
+    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: true, maxClusterRadius: 40,
     spiderfyDistanceMultiplier: 2.5,
     iconCreateFunction: iconCreateFn
   });
 
   communityClusterGroup = L.markerClusterGroup({
-    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, maxClusterRadius: 1,
+    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: true, maxClusterRadius: 40,
     spiderfyDistanceMultiplier: 2.5,
     iconCreateFunction: iconCreateFn
   });
@@ -369,6 +369,9 @@ async function doAreaSearch() {
 function handleSearchResult(data, fitBounds = true) {
   txData = data.transactions || [];
   if (!markerSettings.showLotAddr) txData = txData.filter(tx => !isLotAddress(tx.address_raw || tx.address || ''));
+  if (data.search_type === 'area' && markerSettings.areaBuildTypes) {
+    txData = txData.filter(tx => !tx.building_type || markerSettings.areaBuildTypes.includes(tx.building_type));
+  }
   if (txData.length === 0) { document.getElementById('results').innerHTML = '<div class="empty">😢 沒有找到符合條件的資料</div>'; document.getElementById('summaryBar').style.display = 'none'; markerGroup.clearLayers(); return; }
   window._communityName = data.community_name || null;
   window._searchType = data.search_type || 'address';
@@ -516,50 +519,8 @@ function buildGroups() {
   const arr = Object.values(raw), len = arr.length;
   arr.forEach(g => { const sLat = g.lats.slice().sort((a, b) => a - b), sLng = g.lngs.slice().sort((a, b) => a - b), m = Math.floor(sLat.length / 2); g._cLat = sLat[m]; g._cLng = sLng[m]; });
 
-  // ── Phase 3: Union-Find 近距離合併 ──
-  //    有建案名：≈28m 以內合併
-  //    無建案名：≈8m 以內才合併（避免不同交易被誤合）
-  //    有建案 vs 無建案：不合併
-  const MERGE_COM = 0.00025;    // ≈ 28m for community groups
-  const MERGE_NO_COM = 0.00008; // ≈ 8m for non-community (OSM precise)
-  const par = Array.from({ length: len }, (_, i) => i);
-  function find(x) { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; }
-  const grid = {};
-  const GRID_SIZE = MERGE_COM; // use larger grid for spatial index
-  for (let i = 0; i < len; i++) {
-    const cx = Math.floor(arr[i]._cLat / GRID_SIZE);
-    const cy = Math.floor(arr[i]._cLng / GRID_SIZE);
-    for (let dx = -1; dx <= 1; dx++)
-      for (let dy = -1; dy <= 1; dy++) {
-        const nk = `${cx + dx},${cy + dy}`;
-        if (grid[nk]) grid[nk].forEach(j => {
-          const gi = arr[i], gj = arr[j];
-          // 有建案 vs 無建案不合併
-          if (gi.hasCommunity !== gj.hasCommunity) return;
-          // 選擇合併半徑
-          const mergeR = gi.hasCommunity ? MERGE_COM : MERGE_NO_COM;
-          if (Math.abs(gi._cLat - gj._cLat) < mergeR &&
-            Math.abs(gi._cLng - gj._cLng) < mergeR)
-            par[find(i)] = find(j);
-        });
-      }
-    const k = `${cx},${cy}`;
-    (grid[k] = grid[k] || []).push(i);
-  }
-  const buckets = {}; for (let i = 0; i < len; i++) { const r = find(i); if (!buckets[r]) buckets[r] = []; buckets[r].push(arr[i]); }
-  const merged = Object.values(buckets).map(gs => {
-    if (gs.length === 1) return gs[0];
-    const m = { items: [], lats: [], lngs: [], prices: [], unitPrices: [], hasCommunity: gs[0].hasCommunity }; const lbls = []; const comNames = [];
-    gs.forEach(g => { m.items.push(...g.items); m.lats.push(...g.lats); m.lngs.push(...g.lngs); m.prices.push(...g.prices); m.unitPrices.push(...g.unitPrices); if (g.label) lbls.push(g.label); if (g.communityName) { m.communityName = g.communityName; comNames.push(g.communityName); } });
-    // 優先使用建案名作為標籤
-    const uniqueComs = [...new Set(comNames)];
-    if (uniqueComs.length === 1) m.label = uniqueComs[0];
-    else if (uniqueComs.length > 1) m.label = uniqueComs[0] + '·' + uniqueComs.slice(1).join('·');
-    else { const ul = [...new Set(lbls)]; if (ul.length <= 1) m.label = ul[0] || ''; else if (ul.length === 2) m.label = ul.join('·'); else m.label = ul[0] + '等' + ul.length + '案'; }
-    return m;
-  });
   const nowYear = new Date().getFullYear() - 1911, twoYearThreshold = (nowYear - 2) * 10000;
-  merged.forEach(g => {
+  arr.forEach(g => {
     const recent = g.items.filter(({ tx }) => { if (tx.is_special) return false; const dr = parseInt(String(tx.date_raw || '0').replace(/\D/g, ''), 10); return dr >= twoYearThreshold; });
     const rPrices = recent.map(({ tx }) => tx.price).filter(v => v > 0), rUnits = recent.map(({ tx }) => tx.unit_price_ping).filter(v => v > 0);
     g.recentCount = recent.length; g.recentAvgPrice = rPrices.length ? rPrices.reduce((a, b) => a + b, 0) / rPrices.length : 0; g.recentAvgUnitPrice = rUnits.length ? rUnits.reduce((a, b) => a + b, 0) / rUnits.length : 0;
@@ -567,7 +528,7 @@ function buildGroups() {
     rUnits.sort((a, b) => a - b);
     g.recentMedianUnitPrice = rUnits.length > 0 ? rUnits[Math.floor(rUnits.length / 2)] : 0;
   });
-  return merged;
+  return arr;
 }
 
 // 色彩漸變：綠→黃→紅（HSL 插值）
@@ -873,6 +834,14 @@ function applySettings() {
   markerSettings.innerMode = document.getElementById('sInner').value;
   markerSettings.showLotAddr = document.getElementById('sShowLotAddr').checked;
   markerSettings.yearFormat = document.getElementById('sYearFormat') ? document.getElementById('sYearFormat').value : 'roc';
+
+  const cb = document.querySelectorAll('.sb-checkbox');
+  if (cb.length > 0) {
+    const selectedTypes = [];
+    cb.forEach(c => { if (c.checked) selectedTypes.push(c.value); });
+    markerSettings.areaBuildTypes = selectedTypes;
+  }
+
   localStorage.setItem('markerSettings', JSON.stringify(markerSettings));
 
   updateLegend();
@@ -906,6 +875,11 @@ function loadSettings() {
   document.getElementById('sInner').value = markerSettings.innerMode;
   document.getElementById('sShowLotAddr').checked = !!markerSettings.showLotAddr;
   if (document.getElementById('sYearFormat')) document.getElementById('sYearFormat').value = markerSettings.yearFormat || 'roc';
+
+  if (markerSettings.areaBuildTypes) {
+    const cbs = document.querySelectorAll('.sb-checkbox');
+    cbs.forEach(c => { c.checked = markerSettings.areaBuildTypes.includes(c.value); });
+  }
 
   // Set slider values
   const ut = markerSettings.unitThresholds;

@@ -75,6 +75,20 @@
       <div style="font-size:10px;color:var(--text3);margin-top:2px">預設隱藏僅有地號的交易紀錄</div>
     </div>
     <div class="settings-group">
+      <div class="settings-group-title">🏢 自動顯示建案 - 建物型態過濾</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;margin-top:4px" id="sBuildTypes">
+        <label><input type="checkbox" value="住宅大樓" class="sb-checkbox" checked onchange="applySettings()"> 住宅大樓</label>
+        <label><input type="checkbox" value="華廈" class="sb-checkbox" checked onchange="applySettings()"> 華廈</label>
+        <label><input type="checkbox" value="公寓" class="sb-checkbox" checked onchange="applySettings()"> 公寓</label>
+        <label><input type="checkbox" value="透天厝" class="sb-checkbox" checked onchange="applySettings()"> 透天厝</label>
+        <label><input type="checkbox" value="套房" class="sb-checkbox" checked onchange="applySettings()"> 套房</label>
+        <label><input type="checkbox" value="辦公室" class="sb-checkbox" checked onchange="applySettings()"> 辦公室</label>
+        <label><input type="checkbox" value="店面" class="sb-checkbox" checked onchange="applySettings()"> 店面</label>
+        <label><input type="checkbox" value="廠辦" class="sb-checkbox" checked onchange="applySettings()"> 廠辦</label>
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:4px">取消勾選在地圖範圍搜尋時將自動過濾掉該類型</div>
+    </div>
+    <div class="settings-group">
       <div class="settings-group-title">📅 年份顯示格式</div>
       <select id="sYearFormat" onchange="applySettings()">
         <option value="roc">民國 (ROC)</option>
