@@ -18,7 +18,7 @@ let markerSettings = {
   outerMode: 'unit_price', innerMode: 'total_price',
   contentMode: 'recent2yr',
   unitThresholds: [20, 40, 70], totalThresholds: [500, 1500, 3000],
-  osmZoom: 16, showLotAddr: false
+  osmZoom: 16, showLotAddr: false, yearFormat: 'roc'
 };
 let areaAutoSearch = false;
 let _areaSearchTimer = null;
@@ -129,7 +129,9 @@ function initMap() {
   communityClusterGroup.on('spiderfied', spiderfyHandler);
   communityClusterGroup.on('unspiderfied', unspiderfyHandler);
 
-  map.addLayer(markerClusterGroup); markerGroup = L.featureGroup().addTo(map);
+  map.addLayer(markerClusterGroup);
+  map.addLayer(communityClusterGroup);
+  markerGroup = L.featureGroup().addTo(map);
   map.on('moveend', onMapMoveEnd);
   addLegend();
 }
@@ -262,6 +264,7 @@ function bounceElement(el) {
 function hoverTx(idx) {
   let targetMarker = null;
   markerClusterGroup.eachLayer(layer => { if (!targetMarker && layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) targetMarker = layer; });
+  if (!targetMarker) communityClusterGroup.eachLayer(layer => { if (!targetMarker && layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) targetMarker = layer; });
   if (!targetMarker) return;
   const ll = targetMarker.getLatLng();
   if (!map.getBounds().contains(ll)) {
@@ -286,6 +289,11 @@ function hoverCommunity(name) {
   stopAllBounce();
   const matchedMarkers = [];
   markerClusterGroup.eachLayer(layer => {
+    if (layer._groupLabel === name || (layer._groupItems && layer._groupItems.some(it => it.tx.community_name === name))) {
+      matchedMarkers.push(layer);
+    }
+  });
+  communityClusterGroup.eachLayer(layer => {
     if (layer._groupLabel === name || (layer._groupItems && layer._groupItems.some(it => it.tx.community_name === name))) {
       matchedMarkers.push(layer);
     }
@@ -583,10 +591,15 @@ function makeMarkerSVG({ sz, outerColor, innerColor, line1, line2, fontSz1, font
 }
 
 function plotMarkers(fitBounds = true) {
-  markerClusterGroup.clearLayers(); const boundsArr = [], groups = buildGroups();
+  markerClusterGroup.clearLayers();
+  communityClusterGroup.clearLayers();
+  const boundsArr = [], groups = buildGroups();
   groups.forEach(g => {
-    const n = g.items.length, sortedLats = g.lats.slice().sort((a, b) => a - b), sortedLngs = g.lngs.slice().sort((a, b) => a - b), mid = Math.floor(sortedLats.length / 2);
+    const n = g.items.length;
+    if (n === 0) return;
+    const sortedLats = g.lats.slice().sort((a, b) => a - b), sortedLngs = g.lngs.slice().sort((a, b) => a - b), mid = Math.floor(sortedLats.length / 2);
     const lat = sortedLats[mid], lng = sortedLngs[mid];
+    if (lat == null || lng == null || isNaN(lat) || isNaN(lng)) return; // Guard against Invalid LatLng
     const useRecent = markerSettings.contentMode === 'recent2yr' && g.recentCount > 0;
     const avgPrice = useRecent ? g.recentAvgPrice : (g.prices.length ? g.prices.reduce((a, b) => a + b, 0) / g.prices.length : 0);
     const avgUnitPrice = useRecent ? g.recentAvgUnitPrice : (g.unitPrices.length ? g.unitPrices.reduce((a, b) => a + b, 0) / g.unitPrices.length : 0);
@@ -606,12 +619,17 @@ function plotMarkers(fitBounds = true) {
     const icon = L.divIcon({ html: `<div style="display:flex;flex-direction:column;align-items:center">${svgHtml}${labelHtml}</div>`, iconSize: [sz + 8, totalH], iconAnchor: [(sz + 8) / 2, totalH / 2], className: 'price-marker' });
     const marker = L.marker([lat, lng], { icon });
     marker._groupCount = n; marker._avgPrice = avgPrice; marker._avgUnitPrice = avgUnitPrice; marker._groupLabel = g.label; marker._groupItems = g.items;
-    // ── Marker hover：左側跳到對應 + 顯示 tooltip ──
     marker.on('mouseover', () => onMarkerHover(marker, g));
     marker.on('mouseout', () => onMarkerUnhover());
-    if (n === 1) { const tx = g.items[0].tx, origIdx = g.items[0].origIdx; marker.bindPopup(makePopup(tx), { maxWidth: 320 }); marker.on('click', () => { activeCardIdx = origIdx; renderResults(); const card = document.querySelector(`.tx-card[data-idx="${origIdx}"]`); if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' }); }); }
-    else marker.on('click', () => showClusterList(g.items));
-    markerClusterGroup.addLayer(marker); boundsArr.push([lat, lng]);
+    // Click always shows cluster list (no popup)
+    marker.on('click', () => showClusterList(g.items));
+    // Community markers go to non-merging group; others to merging group
+    if (g.hasCommunity) {
+      communityClusterGroup.addLayer(marker);
+    } else {
+      markerClusterGroup.addLayer(marker);
+    }
+    boundsArr.push([lat, lng]);
   });
   if (fitBounds && boundsArr.length > 0) map.fitBounds(boundsArr, { padding: [40, 40], maxZoom: 18 });
 }
@@ -624,7 +642,18 @@ function makePopup(tx) {
 function selectTx(idx) {
   activeCardIdx = idx; renderResults();
   const tx = txData[idx];
-  if (tx && tx.lat && tx.lng) { map.setView([tx.lat, tx.lng], 17); markerClusterGroup.eachLayer(layer => { if (layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) { markerClusterGroup.zoomToShowLayer(layer, () => { if (layer._groupItems.length === 1) layer.openPopup(); }); } }); }
+  if (tx && tx.lat && tx.lng) {
+    map.setView([tx.lat, tx.lng], 17);
+    const findInGroup = (group) => {
+      group.eachLayer(layer => {
+        if (layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) {
+          group.zoomToShowLayer(layer);
+        }
+      });
+    };
+    findInGroup(markerClusterGroup);
+    findInGroup(communityClusterGroup);
+  }
 }
 
 // ── Marker hover → 左側同步 + tooltip ──
@@ -662,11 +691,25 @@ function onMarkerUnhover() {
   document.querySelectorAll('.community-header.hover-highlight').forEach(h => h.classList.remove('hover-highlight'));
 }
 
-function fmtBuildDate(raw) {
+function formatDateStr(raw) {
   if (!raw) return '-';
   const s = String(raw).trim();
   if (s.length >= 7) {
-    const y = parseInt(s.substring(0, 3), 10) + 1911;
+    const rocY = parseInt(s.substring(0, s.length - 4), 10);
+    const mm = s.substring(s.length - 4, s.length - 2);
+    const dd = s.substring(s.length - 2);
+    if (markerSettings.yearFormat === 'ce') return (rocY + 1911) + '/' + mm + '/' + dd;
+    return rocY + '/' + mm + '/' + dd;
+  }
+  return s;
+}
+
+function fmtBuildDate(raw) {
+  if (!raw) return '-';
+  const s = String(raw).trim();
+  if (s.length >= 5) {
+    const rocY = parseInt(s.substring(0, 3), 10);
+    const y = markerSettings.yearFormat === 'ce' ? rocY + 1911 : rocY;
     return y + '/' + s.substring(3, 5);
   }
   return s || '-';
@@ -810,6 +853,7 @@ function applySettings() {
   markerSettings.outerMode = document.getElementById('sOuter').value;
   markerSettings.innerMode = document.getElementById('sInner').value;
   markerSettings.showLotAddr = document.getElementById('sShowLotAddr').checked;
+  markerSettings.yearFormat = document.getElementById('sYearFormat') ? document.getElementById('sYearFormat').value : 'roc';
   localStorage.setItem('markerSettings', JSON.stringify(markerSettings));
   if (txData.length > 0) plotMarkers(false);
   else doAreaSearch();
@@ -826,6 +870,7 @@ function loadSettings() {
   document.getElementById('sOuter').value = markerSettings.outerMode;
   document.getElementById('sInner').value = markerSettings.innerMode;
   document.getElementById('sShowLotAddr').checked = !!markerSettings.showLotAddr;
+  if (document.getElementById('sYearFormat')) document.getElementById('sYearFormat').value = markerSettings.yearFormat || 'roc';
 
   // Set slider values
   const ut = markerSettings.unitThresholds;
@@ -855,16 +900,8 @@ function toggleAreaAutoSearch(on) {
 }
 
 function updateAreaToggleState() {
-  const z = map ? map.getZoom() : 13;
-  const threshold = markerSettings.osmZoom || 16;
-  const enabled = z >= threshold;
-  const toggle = document.getElementById('areaToggle');
-  const wrap = document.getElementById('areaToggleWrap');
   const label = document.getElementById('areaToggleLabel');
-  if (!toggle || !wrap) return;
-  toggle.disabled = !enabled;
-  wrap.classList.toggle('disabled', !enabled);
-  if (label) label.textContent = enabled ? '搜此區域' : `放大至${threshold}級`;
+  if (label) label.textContent = '自動顯示建案';
 }
 
 function onMapMoveEnd() {
