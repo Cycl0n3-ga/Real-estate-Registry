@@ -107,14 +107,7 @@ function initMap() {
     iconCreateFunction: iconCreateFn
   });
 
-  communityClusterGroup = L.markerClusterGroup({
-    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, maxClusterRadius: 40,
-    spiderfyDistanceMultiplier: 2.5,
-    iconCreateFunction: iconCreateFn
-  });
-
   markerClusterGroup.on('clusterclick', function (a) { a.layer.spiderfy(); });
-  communityClusterGroup.on('clusterclick', function (a) { a.layer.spiderfy(); });
 
   const spiderfyHandler = (e) => {
     e.cluster._icon.classList.add('spider-focus');
@@ -129,11 +122,8 @@ function initMap() {
 
   markerClusterGroup.on('spiderfied', spiderfyHandler);
   markerClusterGroup.on('unspiderfied', unspiderfyHandler);
-  communityClusterGroup.on('spiderfied', spiderfyHandler);
-  communityClusterGroup.on('unspiderfied', unspiderfyHandler);
 
   map.addLayer(markerClusterGroup);
-  map.addLayer(communityClusterGroup);
   markerGroup = L.featureGroup().addTo(map);
   map.on('moveend', onMapMoveEnd);
   addLegend();
@@ -271,7 +261,6 @@ function bounceElement(el) {
 function hoverTx(idx) {
   let targetMarker = null;
   markerClusterGroup.eachLayer(layer => { if (!targetMarker && layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) targetMarker = layer; });
-  if (!targetMarker) communityClusterGroup.eachLayer(layer => { if (!targetMarker && layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) targetMarker = layer; });
   if (!targetMarker) return;
   const ll = targetMarker.getLatLng();
   if (!map.getBounds().contains(ll)) {
@@ -296,11 +285,6 @@ function hoverCommunity(name) {
   stopAllBounce();
   const matchedMarkers = [];
   markerClusterGroup.eachLayer(layer => {
-    if (layer._groupLabel === name || (layer._groupItems && layer._groupItems.some(it => it.tx.community_name === name))) {
-      matchedMarkers.push(layer);
-    }
-  });
-  communityClusterGroup.eachLayer(layer => {
     if (layer._groupLabel === name || (layer._groupItems && layer._groupItems.some(it => it.tx.community_name === name))) {
       matchedMarkers.push(layer);
     }
@@ -557,7 +541,6 @@ function makeMarkerSVG({ sz, outerColor, innerColor, line1, line2, fontSz1, font
 
 function plotMarkers(fitBounds = true) {
   markerClusterGroup.clearLayers();
-  communityClusterGroup.clearLayers();
   const boundsArr = [], groups = buildGroups();
   groups.forEach(g => {
     const n = g.items.length;
@@ -588,12 +571,8 @@ function plotMarkers(fitBounds = true) {
     marker.on('mouseout', () => onMarkerUnhover());
     // Click always shows cluster list (no popup)
     marker.on('click', () => showClusterList(g.items));
-    // Community markers go to non-merging group; others to merging group
-    if (g.hasCommunity) {
-      communityClusterGroup.addLayer(marker);
-    } else {
-      markerClusterGroup.addLayer(marker);
-    }
+
+    markerClusterGroup.addLayer(marker);
     boundsArr.push([lat, lng]);
   });
   if (fitBounds && boundsArr.length > 0) map.fitBounds(boundsArr, { padding: [40, 40], maxZoom: 18 });
@@ -617,7 +596,6 @@ function selectTx(idx) {
       });
     };
     findInGroup(markerClusterGroup);
-    findInGroup(communityClusterGroup);
   }
 }
 
