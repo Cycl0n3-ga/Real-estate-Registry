@@ -424,22 +424,25 @@ function renderTxCard(tx, idx, inGroup) {
   const specialCls = tx.is_special ? ' special' : '';
   const specialBadge = tx.is_special ? '<span class="special-badge">特殊</span>' : '';
   const parkingTag = tx.has_parking ? `<span class="tx-parking-tag">🚗 含車位${tx.parking_price > 0 ? ' ' + fmtWan(tx.parking_price) : ''}</span>` : '';
+  const svgArea = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px;vertical-align:-2px"><path d="M4 4h16v16H4z"/><path d="M4 14h16"/><path d="M10 4v16"/></svg>`;
+  const svgLayout = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px;vertical-align:-2px"><path d="M3 21h18"/><path d="M5 21V9l7-6 7 6v12"/><path d="M9 21v-6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v6"/></svg>`;
   return `<div class="tx-card${isActive ? ' active' : ''}${priceClass}${specialCls}" onclick="selectTx(${idx})" onmouseenter="hoverTx(${idx})" onmouseleave="unhoverTx()" data-idx="${idx}">
     ${colorDot}
+    <div class="tx-price-col">
+      <div class="tx-price">${fmtWan(tx.price)}</div>
+      <div class="tx-unit">${fmtUnitPrice(tx.unit_price_ping, tx.unit_price_sqm)}</div>
+    </div>
     <div class="tx-addr" title="${escAttr(tx.address)}">${escHtml(tx.address)}${specialBadge}</div>
     ${cnRow}
     <div class="tx-detail-row">
-      <span>📅 ${formatDateStr(tx.date_raw)}</span><span>📐 ${fmtArea(tx.area_sqm, tx.area_ping)}</span>
-      <span>${tx.rooms || 0}房${tx.halls || 0}廳${tx.baths || 0}衛</span>
+      <span>&#x1F4C5; ${formatDateStr(tx.date_raw)}</span>
+      <span style="display:flex;align-items:center">${svgArea} ${fmtArea(tx.area_sqm, tx.area_ping)}</span>
+      <span style="display:flex;align-items:center">${svgLayout} ${tx.rooms || 0}房${tx.halls || 0}廳${tx.baths || 0}衛</span>
       ${tx.floor ? `<span>🏢 ${escHtml(String(tx.floor))}F/${escHtml(String(tx.total_floors))}F</span>` : ''}
       ${tx.public_ratio > 0 ? `<span class="tag">公設${tx.public_ratio}%</span>` : ''}
       ${tx.building_type ? `<span class="tag">${escHtml(tx.building_type)}</span>` : ''}
       ${parkingTag}
       ${tx.note ? `<span style="color:var(--text3);font-size:10px">📝 ${escHtml(tx.note.length > 30 ? tx.note.substring(0, 30) + '…' : tx.note)}</span>` : ''}
-    </div>
-    <div class="tx-price-col">
-      <div class="tx-unit">${fmtUnitPrice(tx.unit_price_ping, tx.unit_price_sqm)}</div>
-      <div class="tx-price">${fmtWan(tx.price)}</div>
     </div>
   </div>`;
 }
