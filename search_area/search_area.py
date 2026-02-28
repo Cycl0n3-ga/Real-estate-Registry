@@ -9,6 +9,7 @@ search_area.py — 區域搜尋模組
 """
 
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -29,14 +30,18 @@ SELECT_COLS = """
     note, lat, lng, community_name
 """
 
-# ── 連線快取 ──────────────────────────────────────────────────────────────────
-_conn_cache = {}
+# ── 連線快取（每執行緒獨立）──────────────────────────────────────────────────
+_local = threading.local()
 
 
 def _get_connection(db_path: str):
-    """取得已優化的 SQLite 連線（模組級快取，避免重複開關）"""
-    if db_path in _conn_cache:
-        return _conn_cache[db_path]
+    """取得已優化的 SQLite 連線（per-thread 快取，避免跨執行緒存取）"""
+    conns = getattr(_local, 'conns', None)
+    if conns is None:
+        _local.conns = {}
+        conns = _local.conns
+    if db_path in conns:
+        return conns[db_path]
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -44,7 +49,7 @@ def _get_connection(db_path: str):
     conn.execute("PRAGMA cache_size=-32768")      # 32MB cache
     conn.execute("PRAGMA mmap_size=268435456")     # 256MB mmap
     conn.execute("PRAGMA temp_store=MEMORY")
-    _conn_cache[db_path] = conn
+    conns[db_path] = conn
     return conn
 
 

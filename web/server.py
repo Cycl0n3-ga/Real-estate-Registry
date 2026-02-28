@@ -59,7 +59,7 @@ from search_area import (
 from com_match import CommunityMatcher
 
 # ── Flask 設定 ────────────────────────────────────────────────────────────────
-app = Flask(__name__, static_folder="static")
+app = Flask(__name__, static_folder="static", static_url_path="")
 CORS(app)
 Compress(app)
 app.config['COMPRESS_MIMETYPES'] = ['application/json', 'text/html', 'text/css', 'application/javascript']
@@ -297,31 +297,8 @@ def api_search():
         com_raw_rows = _search_by_community_name(community_name, filters, limit)
         print(f"🏘️  直接建案搜尋: {community_name} → {len(com_raw_rows)} 筆")
 
-    # ════════════ 路徑 A: com2address — 把 keyword 當建案名搜尋 ════════════
-    elif com2addr_ready and com2addr_engine:
-        try:
-            com_result = com2addr_engine.query(keyword, top_n=5)
-            if com_result.get("found") and com_result.get("match_type") != "未找到":
-                mt = com_result.get("match_type", "")
-                tx_count = com_result.get("transaction_count", 0) or 0
-
-                if "精確" in mt and tx_count >= 2:
-                    community_name = com_result.get("matched_name", keyword)
-                    search_type = "community"
-                    print(f"🏘️  建案搜尋: {keyword} → {community_name} ({tx_count} 筆)")
-                elif "精確" not in mt:
-                    candidates = com_result.get("candidates", [])
-                    best = max(candidates, key=lambda x: x.get("tx_count", 0), default=None)
-                    if best and best.get("tx_count", 0) >= 2:
-                        community_name = best["name"]
-                        search_type = "community"
-                        print(f"🏘️  建案模糊: {keyword} → {community_name} ({best['tx_count']} 筆)")
-
-                if community_name:
-                    com_raw_rows = _search_by_community_name(community_name, filters, limit)
-                    print(f"   → com2address 直查: {len(com_raw_rows)} 筆")
-        except Exception as e:
-            print(f"⚠️  com2address 查詢錯誤: {e}")
+    # （路徑 A 已移除：不再自動把 keyword 當建案名搜尋。
+    #   只有使用者從自動建議列表明確選擇建案時，前端才傳 community 參數走路徑 0。）
 
     # ════════════ 路徑 B: address2com → 找到建案 → community_name 查 DB ════════════
     a2c_raw_rows = []
