@@ -167,6 +167,14 @@ function getFilterParams() {
 function getHeaderFilterParams() {
   let p = '';
   const hd = document.getElementById('hfDistrict'); if (hd && hd.value) p += '&district=' + encodeURIComponent(hd.value);
+  const hb = document.getElementById('hfBuildType'); if (hb && hb.value) p += '&building_type=' + encodeURIComponent(hb.value);
+  const yMin = document.getElementById('hfYearMin');
+  const yMax = document.getElementById('hfYearMax');
+  if (yMin && yMax && (yMin.value || yMax.value)) {
+    const vMin = yMin.value || '0';
+    const vMax = yMax.value || '999';
+    p += '&year=' + encodeURIComponent(`${vMin}-${vMax}`);
+  }
   return p;
 }
 
@@ -438,7 +446,7 @@ function renderTxCard(tx, idx, inGroup) {
     <div class="tx-addr" title="${escAttr(tx.address)}">${escHtml(tx.address)}${specialBadge}</div>
     ${cnRow}
     <div class="tx-detail-row">
-      <span>📅 ${tx.date || '-'}</span><span>📐 ${fmtArea(tx.area_sqm, tx.area_ping)}</span>
+      <span>📅 ${formatDateStr(tx.date_raw)}</span><span>📐 ${fmtArea(tx.area_sqm, tx.area_ping)}</span>
       <span>${tx.rooms || 0}房${tx.halls || 0}廳${tx.baths || 0}衛</span>
       ${tx.floor ? `<span>🏢 ${escHtml(String(tx.floor))}F/${escHtml(String(tx.total_floors))}F</span>` : ''}
       ${tx.public_ratio > 0 ? `<span class="tag">公設${tx.public_ratio}%</span>` : ''}
@@ -636,7 +644,7 @@ function plotMarkers(fitBounds = true) {
 
 function makePopup(tx) {
   const cn = tx.community_name ? `<div style="background:var(--green-bg);padding:2px 8px;border-radius:8px;display:inline-block;color:var(--green);font-size:12px;font-weight:600;margin-bottom:4px">🏘️ ${escHtml(tx.community_name)}</div><br>` : '';
-  return `<div style="font-size:13px;line-height:1.6">${cn}<b>${escHtml(tx.address)}</b><br>📅 ${tx.date || '-'} ｜ 📐 ${fmtArea(tx.area_sqm, tx.area_ping)}<br>💰 <b style="color:var(--red)">${fmtWan(tx.price)}</b> <span style="color:var(--text2)">${fmtUnitPrice(tx.unit_price_ping, tx.unit_price_sqm)}</span><br>🏢 ${tx.rooms || 0}房${tx.halls || 0}廳${tx.baths || 0}衛${tx.floor ? '｜ ' + tx.floor + 'F/' + tx.total_floors + 'F' : ''}${tx.public_ratio > 0 ? '｜ 公設' + tx.public_ratio + '%' : ''}${tx.building_type ? '<br>' + escHtml(tx.building_type) : ''}${tx.has_parking ? '<br>🚗 含車位 ' + fmtWan(tx.parking_price) : ''}${tx.note ? '<br><span style="color:var(--text3);font-size:11px">' + escHtml(tx.note) + '</span>' : ''}</div>`;
+  return `<div style="font-size:13px;line-height:1.6">${cn}<b>${escHtml(tx.address)}</b><br>📅 ${formatDateStr(tx.date_raw)} ｜ 📐 ${fmtArea(tx.area_sqm, tx.area_ping)}<br>💰 <b style="color:var(--red)">${fmtWan(tx.price)}</b> <span style="color:var(--text2)">${fmtUnitPrice(tx.unit_price_ping, tx.unit_price_sqm)}</span><br>🏢 ${tx.rooms || 0}房${tx.halls || 0}廳${tx.baths || 0}衛${tx.floor ? '｜ ' + tx.floor + 'F/' + tx.total_floors + 'F' : ''}${tx.public_ratio > 0 ? '｜ 公設' + tx.public_ratio + '%' : ''}${tx.building_type ? '<br>' + escHtml(tx.building_type) : ''}${tx.has_parking ? '<br>🚗 含車位 ' + fmtWan(tx.parking_price) : ''}${tx.note ? '<br><span style="color:var(--text3);font-size:11px">' + escHtml(tx.note) + '</span>' : ''}</div>`;
 }
 
 function selectTx(idx) {
@@ -723,7 +731,7 @@ function showMarkerTooltip(marker, group) {
   const label = group.communityName || group.label || '';
 
   // Year & floor details
-  const years = items.map(({ tx }) => tx.date_raw ? String(tx.date_raw).substring(0, 3) : '').filter(Boolean);
+  const years = items.map(({ tx }) => tx.date_raw ? formatDateStr(tx.date_raw).split('/')[0] : '').filter(Boolean);
   const uniqueYears = [...new Set(years)].sort();
   const yearRange = uniqueYears.length > 0 ? (uniqueYears.length <= 2 ? uniqueYears.join('-') : uniqueYears[0] + '-' + uniqueYears[uniqueYears.length - 1]) : '-';
   const floors = items.map(({ tx }) => tx.total_floors).filter(v => v > 0);
@@ -855,8 +863,12 @@ function applySettings() {
   markerSettings.showLotAddr = document.getElementById('sShowLotAddr').checked;
   markerSettings.yearFormat = document.getElementById('sYearFormat') ? document.getElementById('sYearFormat').value : 'roc';
   localStorage.setItem('markerSettings', JSON.stringify(markerSettings));
-  if (txData.length > 0) plotMarkers(false);
-  else doAreaSearch();
+  if (txData.length > 0) {
+    renderResults();
+    plotMarkers(false);
+  } else {
+    doAreaSearch();
+  }
 }
 
 function loadSettings() {
@@ -867,6 +879,15 @@ function loadSettings() {
       Object.assign(markerSettings, p);
     }
   } catch (e) { }
+
+  // 避免舊版損毀的 localStorage 覆蓋掉設定導致色階失效
+  if (!markerSettings.unitThresholds || markerSettings.unitThresholds.length !== 3 || markerSettings.unitThresholds[0] == null) {
+    markerSettings.unitThresholds = [20, 45, 70];
+  }
+  if (!markerSettings.totalThresholds || markerSettings.totalThresholds.length !== 3 || markerSettings.totalThresholds[0] == null) {
+    markerSettings.totalThresholds = [500, 1750, 3000];
+  }
+
   document.getElementById('sOuter').value = markerSettings.outerMode;
   document.getElementById('sInner').value = markerSettings.innerMode;
   document.getElementById('sShowLotAddr').checked = !!markerSettings.showLotAddr;
