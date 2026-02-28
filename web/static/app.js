@@ -174,10 +174,6 @@ function getFilterParams() {
     p += '&year=' + encodeURIComponent(`${vMin}-${vMax}`);
   }
 
-  if (lastSearchType === 'area' && markerSettings.areaBuildTypes) {
-    p += '&building_type=' + encodeURIComponent(markerSettings.areaBuildTypes.join(','));
-  }
-
   return p;
 }
 
@@ -372,9 +368,6 @@ async function doAreaSearch() {
 function handleSearchResult(data, fitBounds = true) {
   txData = data.transactions || [];
   if (!markerSettings.showLotAddr) txData = txData.filter(tx => !isLotAddress(tx.address_raw || tx.address || ''));
-  if (data.search_type === 'area' && markerSettings.areaBuildTypes) {
-    txData = txData.filter(tx => !tx.building_type || markerSettings.areaBuildTypes.includes(tx.building_type));
-  }
   if (txData.length === 0) { document.getElementById('results').innerHTML = '<div class="empty">😢 沒有找到符合條件的資料</div>'; document.getElementById('summaryBar').style.display = 'none'; markerGroup.clearLayers(); return; }
   window._communityName = data.community_name || null;
   window._searchType = data.search_type || 'address';
@@ -837,16 +830,6 @@ function updateThresh() {
 function applySettings() {
   let needsRefetch = false;
 
-  const cb = document.querySelectorAll('.sb-checkbox');
-  if (cb.length > 0) {
-    const selectedTypes = [];
-    cb.forEach(c => { if (c.checked) selectedTypes.push(c.value); });
-    if (JSON.stringify(markerSettings.areaBuildTypes) !== JSON.stringify(selectedTypes)) {
-      needsRefetch = true;
-      markerSettings.areaBuildTypes = selectedTypes;
-    }
-  }
-
   const yMin = document.getElementById('hfYearMin') ? document.getElementById('hfYearMin').value : '';
   const yMax = document.getElementById('hfYearMax') ? document.getElementById('hfYearMax').value : '';
   if (markerSettings.yearMin !== yMin || markerSettings.yearMax !== yMax) {
@@ -905,11 +888,6 @@ function loadSettings() {
   }
   if (document.getElementById('hfYearMax') && markerSettings.yearMax !== undefined) {
     document.getElementById('hfYearMax').value = markerSettings.yearMax;
-  }
-
-  if (markerSettings.areaBuildTypes) {
-    const cbs = document.querySelectorAll('.sb-checkbox');
-    cbs.forEach(c => { c.checked = markerSettings.areaBuildTypes.includes(c.value); });
   }
 
   // Set slider values
