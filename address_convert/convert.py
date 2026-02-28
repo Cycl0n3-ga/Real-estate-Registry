@@ -232,7 +232,7 @@ CHINESE_FLOOR = {
 
 
 def parse_floor_info(floor_str):
-    """解析樓層欄位: '九層/十五層' → ('9', '15')"""
+    """解析樓層欄位: '九層/十五層' → ('9', '15'), 或 '九層' -> ('9', '')"""
     if not floor_str:
         return '', ''
     parts = floor_str.split('/')
@@ -246,6 +246,11 @@ def parse_floor_info(floor_str):
                 else:
                     tf = str(CHINESE_FLOOR[stripped])
         return fl, tf
+    
+    # 處理沒有 / 的單一數值
+    stripped = floor_str.strip().rstrip('層')
+    if stripped in CHINESE_FLOOR:
+        return str(CHINESE_FLOOR[stripped]), ''
     return floor_str.strip(), ''
 
 
@@ -281,7 +286,7 @@ def strip_city(addr):
 
 def strip_floor(addr):
     """去除尾端樓層資訊，取得建物基礎地址"""
-    addr = re.sub(r'(-\d+|地下\d+|\d+)樓[之\d]*$', '', addr)
+    addr = re.sub(r'(-\d+|地下\d+|\d+)[樓Ff][之\d]*$', '', addr)
     return addr.rstrip('之号號 ')
 
 
@@ -1193,8 +1198,8 @@ def _parse_csv_row(row: list) -> Optional[dict]:
         'non_urban_use':     row[6],
         'transaction_date':  row[7],
         'transaction_count': row[8],
-        'floor_level':       row[9],
-        'total_floors':      row[10],
+        'floor_level':       parse_floor_info(row[9])[0] or row[9],
+        'total_floors':      parse_floor_info(row[10])[0] or row[10],
         'building_type':     row[11],
         'main_use':          row[12],
         'main_material':     row[13],
@@ -1262,8 +1267,8 @@ def _parse_csv_row_fast(row: list):
         row[6],                          # non_urban_use
         row[7],                          # transaction_date
         row[8],                          # transaction_count
-        row[9],                          # floor_level
-        row[10],                         # total_floors
+        parse_floor_info(row[9])[0] or row[9],   # floor_level
+        parse_floor_info(row[10])[0] or row[10], # total_floors
         row[11],                         # building_type
         row[12],                         # main_use
         row[13],                         # main_material
@@ -1350,7 +1355,9 @@ def _parse_api_row(row) -> Optional[dict]:
     # 正確來源: JSON 'tp' = 總價, JSON 'p' = 每坪單價
     total_price = parse_price(j.get('tp')) or parse_price(tp_raw)
     unit_price = safe_float(j.get('p')) or safe_float(j.get('cp'))
-    building_area = safe_float(area_col) or safe_float(j.get('s'))
+    # API DB stores area in Ping, but our DB expects SQM. Convert Ping back to SQM (1 Ping = 3.305785 sqm)
+    area_ping = safe_float(area_col) or safe_float(j.get('s'))
+    building_area = area_ping * 3.305785 if area_ping else None
 
     serial_no = f'api_{sq}' if sq else None
 

@@ -60,16 +60,48 @@ function setUnit(u) {
 // ── 地圖初始化 ──
 function initMap() {
   map = L.map('map', { zoomControl: false }).setView([23.6978, 120.9605], 8);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_labels_under/{z}/{x}/{y}{r}.png', { attribution: '&copy; OpenStreetMap & CartoDB' }).addTo(map);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_labels_under/{z}/{x}/{y}{r}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap & CartoDB' }).addTo(map);
   markerClusterGroup = L.markerClusterGroup({
-    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, maxClusterRadius: 80,
+    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, maxClusterRadius: 2,
+    spiderfyDistanceMultiplier: 2.5,
     iconCreateFunction: function (cluster) {
-      const markers = cluster.getAllChildMarkers(); let total = 0, count = 0;
-      markers.forEach(m => { if (m._avgPrice > 0) { total += m._avgPrice; count++; } });
-      const avgWan = count > 0 ? (total / count) / 10000 : 0;
-      let c = '#1b5e20'; if (avgWan >= 3000) c = '#b71c1c'; else if (avgWan >= 1500) c = '#e65100'; else if (avgWan >= 500) c = '#f57f17';
-      const n = markers.reduce((acc, m) => acc + (m._groupCount || 1), 0);
-      return L.divIcon({ html: `<div style="background-color:${c};color:white;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:14px;box-shadow:0 0 0 2px rgba(255,255,255,0.8),0 4px 8px rgba(0,0,0,0.3)">${n > 99 ? '99+' : n}</div>`, className: 'custom-cluster-icon', iconSize: L.point(40, 40) });
+      const markers = cluster.getAllChildMarkers();
+      let totalPrice = 0, validP = 0, totalUnit = 0, validU = 0, totalCount = 0;
+      markers.forEach(m => {
+        const gc = m._groupCount || 1; totalCount += gc;
+        if (m._avgPrice > 0) { totalPrice += m._avgPrice * gc; validP += gc; }
+        if (m._avgUnitPrice > 0) { totalUnit += m._avgUnitPrice * gc; validU += gc; }
+      });
+      const avgPriceWan = validP > 0 ? (totalPrice / validP / 10000) : 0;
+      const avgUnitWan = validU > 0 ? (totalUnit / validU / 10000) : 0;
+
+      const outerColor = getColorForMode(markerSettings.outerMode, avgPriceWan, avgUnitWan);
+      const innerColor = getColorForMode(markerSettings.innerMode, avgPriceWan, avgUnitWan);
+
+      let priceText = '';
+      if (avgPriceWan >= 10000) priceText = (avgPriceWan / 10000).toFixed(1) + '億';
+      else if (avgPriceWan >= 1) priceText = avgPriceWan.toFixed(0) + '萬';
+
+      let sz = 44;
+      if (totalCount >= 100) sz = 60; else if (totalCount >= 30) sz = 54; else if (totalCount >= 10) sz = 48;
+
+      const line1 = priceText || totalCount + '筆';
+      const line2 = priceText ? totalCount + '筆' : '';
+      const svgHtml = makeMarkerSVG({ sz, outerColor, innerColor, line1, line2 });
+
+      // Determine if there's a common label (e.g. community name)
+      const labels = markers.map(m => m._groupLabel).filter(Boolean);
+      const uniqueLabels = [...new Set(labels)];
+      const commLabel = uniqueLabels.length === 1 ? uniqueLabels[0].substring(0, 6) : '';
+      const labelHtml = commLabel ? `<div style="margin-top:-2px;padding:1px 4px;background:rgba(255,255,255,.92);border-radius:6px;font-size:8px;font-weight:600;color:#333;white-space:nowrap;max-width:70px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08)">${commLabel}</div>` : '';
+
+      const totalH = commLabel ? sz + 14 : sz;
+      return L.divIcon({
+        html: `<div style="display:flex;flex-direction:column;align-items:center">${svgHtml}${labelHtml}</div>`,
+        className: 'price-marker custom-cluster-icon',
+        iconSize: [sz + 8, totalH],
+        iconAnchor: [(sz + 8) / 2, totalH / 2]
+      });
     }
   });
 
@@ -574,7 +606,7 @@ function plotMarkers(fitBounds = true) {
     else marker.on('click', () => showClusterList(g.items));
     markerClusterGroup.addLayer(marker); boundsArr.push([lat, lng]);
   });
-  if (fitBounds && boundsArr.length > 0) map.fitBounds(boundsArr, { padding: [40, 40], maxZoom: 16 });
+  if (fitBounds && boundsArr.length > 0) map.fitBounds(boundsArr, { padding: [40, 40], maxZoom: 18 });
 }
 
 function makePopup(tx) {
