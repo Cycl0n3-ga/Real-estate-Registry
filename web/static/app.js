@@ -129,9 +129,7 @@ function initMap() {
   communityClusterGroup.on('spiderfied', spiderfyHandler);
   communityClusterGroup.on('unspiderfied', unspiderfyHandler);
 
-  map.addLayer(markerClusterGroup);
-  map.addLayer(communityClusterGroup);
-  markerGroup = L.featureGroup().addTo(map);
+  map.addLayer(markerClusterGroup); markerGroup = L.featureGroup().addTo(map);
   map.on('moveend', onMapMoveEnd);
   addLegend();
 }
@@ -264,7 +262,6 @@ function bounceElement(el) {
 function hoverTx(idx) {
   let targetMarker = null;
   markerClusterGroup.eachLayer(layer => { if (!targetMarker && layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) targetMarker = layer; });
-  communityClusterGroup.eachLayer(layer => { if (!targetMarker && layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) targetMarker = layer; });
   if (!targetMarker) return;
   const ll = targetMarker.getLatLng();
   if (!map.getBounds().contains(ll)) {
@@ -279,27 +276,16 @@ function hoverTx(idx) {
     bounceElement(inner);
   };
   if (targetMarker._icon) tryBounce();
-  else {
-    // Check both cluster groups
-    let found = false;
-    markerClusterGroup.zoomToShowLayer(targetMarker, () => { setTimeout(tryBounce, 100); found = true; });
-    if (!found) {
-      communityClusterGroup.zoomToShowLayer(targetMarker, () => { setTimeout(tryBounce, 100); });
-    }
-  }
+  else markerClusterGroup.zoomToShowLayer(targetMarker, () => setTimeout(tryBounce, 100));
 }
 function unhoverTx() {
   stopAllBounce();
+  hideMarkerTooltip();
 }
 function hoverCommunity(name) {
   stopAllBounce();
   const matchedMarkers = [];
   markerClusterGroup.eachLayer(layer => {
-    if (layer._groupLabel === name || (layer._groupItems && layer._groupItems.some(it => it.tx.community_name === name))) {
-      matchedMarkers.push(layer);
-    }
-  });
-  communityClusterGroup.eachLayer(layer => {
     if (layer._groupLabel === name || (layer._groupItems && layer._groupItems.some(it => it.tx.community_name === name))) {
       matchedMarkers.push(layer);
     }
@@ -406,6 +392,7 @@ function renderResults() {
       <span class="ch-count">${group.items.length} 筆</span></div>`;
     if (stats) {
       html += `<div class="community-stats" id="cstats-${cssId(cn)}" style="${isCollapsed ? 'display:none' : ''}">
+        <div class="cs-item"><span class="cs-label">📊 筆數</span><span class="cs-value">${group.items.length}</span></div>
         <div class="cs-item"><span class="cs-label">💰 均總</span><span class="cs-value">${fmtWan(stats.avg_price)}</span></div>
         <div class="cs-item"><span class="cs-label"> 均單</span><span class="cs-value">${stats.avg_unit_price_ping > 0 ? (stats.avg_unit_price_ping / 10000).toFixed(1) + '萬/坪' : '-'}</span></div>
         <div class="cs-item"><span class="cs-label">📐 均坪</span><span class="cs-value">${stats.avg_ping > 0 ? stats.avg_ping.toFixed(1) + '坪' : '-'}</span></div>
@@ -443,7 +430,7 @@ function renderTxCard(tx, idx, inGroup) {
     <div class="tx-addr" title="${escAttr(tx.address)}">${escHtml(tx.address)}${specialBadge}</div>
     ${cnRow}
     <div class="tx-detail-row">
-      <span>📅 ${formatDateStr(tx.date_raw)}</span><span>📐 ${fmtArea(tx.area_sqm, tx.area_ping)}</span>
+      <span>📅 ${tx.date || '-'}</span><span>📐 ${fmtArea(tx.area_sqm, tx.area_ping)}</span>
       <span>${tx.rooms || 0}房${tx.halls || 0}廳${tx.baths || 0}衛</span>
       ${tx.floor ? `<span>🏢 ${escHtml(String(tx.floor))}F/${escHtml(String(tx.total_floors))}F</span>` : ''}
       ${tx.public_ratio > 0 ? `<span class="tag">公設${tx.public_ratio}%</span>` : ''}
@@ -595,92 +582,53 @@ function makeMarkerSVG({ sz, outerColor, innerColor, line1, line2, fontSz1, font
   </svg>`;
 }
 
-function calcStats(items) {
-  if (!items || items.length === 0) return null;
-  let prices = [], unitPrices = [];
-  items.forEach(({ tx }) => {
-    if (tx.price > 0) prices.push(tx.price);
-    if (tx.unit_price_ping > 0) unitPrices.push(tx.unit_price_ping);
-  });
-  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-  return {
-    avg_price: avg(prices),
-    avg_price_wan: avg(prices) / 10000,
-    avg_unit_price_ping: avg(unitPrices),
-    avg_unit_price_wan: avg(unitPrices) / 10000,
-    recent_count: items.length // Simplified for this context, actual recent count logic is in buildGroups
-  };
-}
-
 function plotMarkers(fitBounds = true) {
-  markerClusterGroup.clearLayers();
-  communityClusterGroup.clearLayers();
-  const boundsArr = [], groups = buildGroups();
+  markerClusterGroup.clearLayers(); const boundsArr = [], groups = buildGroups();
   groups.forEach(g => {
-    if (g.items.length === 0) return;
-    const lat = g._cLat, lng = g._cLng;
-    const stats = calcStats(g.items);
-    if (!stats) return;
-
-    const svgHtml = makeMarkerSVG({ sz: 42, outerColor: getColorForMode(markerSettings.outerMode, stats.avg_price_wan, stats.avg_unit_price_wan), innerColor: getColorForMode(markerSettings.innerMode, stats.avg_price_wan, stats.avg_unit_price_wan), line1: stats.recent_count + '筆', line2: '' });
-    let labelHtml = '';
-    if (g.communityName) {
-      const shortCom = g.communityName.substring(0, 6);
-      labelHtml = `<div style="margin-top:-2px;padding:1px 4px;background:rgba(255,255,255,.92);border-radius:6px;font-size:8px;font-weight:600;color:#333;white-space:nowrap;max-width:70px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08)">${shortCom}</div>`;
-    }
-    const totalH = g.communityName ? 56 : 42;
-    const marker = L.marker([lat, lng], {
-      icon: L.divIcon({ html: `<div style="display:flex;flex-direction:column;align-items:center;transition:transform 0.2s">${svgHtml}${labelHtml}</div>`, className: 'price-marker', iconSize: [50, totalH], iconAnchor: [25, totalH / 2] })
-    });
-
-    marker._groupLabel = g.communityName || g.label || '';
-    marker._groupCount = g.items.length;
-    marker._avgPrice = stats.avg_price;
-    marker._avgUnitPrice = stats.avg_unit_price_ping;
-    marker._groupItems = g.items;
-
+    const n = g.items.length, sortedLats = g.lats.slice().sort((a, b) => a - b), sortedLngs = g.lngs.slice().sort((a, b) => a - b), mid = Math.floor(sortedLats.length / 2);
+    const lat = sortedLats[mid], lng = sortedLngs[mid];
+    const useRecent = markerSettings.contentMode === 'recent2yr' && g.recentCount > 0;
+    const avgPrice = useRecent ? g.recentAvgPrice : (g.prices.length ? g.prices.reduce((a, b) => a + b, 0) / g.prices.length : 0);
+    const avgUnitPrice = useRecent ? g.recentAvgUnitPrice : (g.unitPrices.length ? g.unitPrices.reduce((a, b) => a + b, 0) / g.unitPrices.length : 0);
+    const avgPriceWan = avgPrice / 10000, avgUnitWan = avgUnitPrice / 10000;
+    const outerColor = getColorForMode(markerSettings.outerMode, avgPriceWan, avgUnitWan);
+    const innerColor = getColorForMode(markerSettings.innerMode, avgPriceWan, avgUnitWan);
+    const label = g.label ? g.label.substring(0, 8) : '';
+    let priceText = '';
+    if (avgPriceWan >= 10000) priceText = (avgPriceWan / 10000).toFixed(1) + '億';
+    else if (avgPriceWan >= 1) priceText = Math.round(avgPriceWan) + '萬';
+    else priceText = '-';
+    let sz = n >= 20 ? 56 : (n >= 5 ? 50 : 44); if (n === 1) sz = 42;
+    let line1, line2; if (n === 1) { line1 = priceText; line2 = ''; } else { line1 = priceText; line2 = n + '筆'; }
+    const svgHtml = makeMarkerSVG({ sz, outerColor, innerColor, line1, line2 });
+    const labelHtml = label ? `<div style="margin-top:-2px;padding:1px 5px;background:rgba(255,255,255,.95);border-radius:6px;font-size:${n > 1 ? 9 : 8}px;font-weight:700;color:#333;white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.08)">${escHtml(label)}</div>` : '';
+    const totalH = label ? sz + 15 : sz;
+    const icon = L.divIcon({ html: `<div style="display:flex;flex-direction:column;align-items:center">${svgHtml}${labelHtml}</div>`, iconSize: [sz + 8, totalH], iconAnchor: [(sz + 8) / 2, totalH / 2], className: 'price-marker' });
+    const marker = L.marker([lat, lng], { icon });
+    marker._groupCount = n; marker._avgPrice = avgPrice; marker._avgUnitPrice = avgUnitPrice; marker._groupLabel = g.label; marker._groupItems = g.items;
+    // ── Marker hover：左側跳到對應 + 顯示 tooltip ──
     marker.on('mouseover', () => onMarkerHover(marker, g));
-    marker.on('mouseout', onMarkerUnhover);
-    if (g.hasCommunity) {
-      marker.on('click', () => { showClusterList(g.items); window.location.hash = `#community-${encodeURIComponent(g.communityName)}`; });
-      communityClusterGroup.addLayer(marker);
-    } else {
-      marker.on('click', () => showClusterList(g.items));
-      markerClusterGroup.addLayer(marker);
-    }
-    boundsArr.push([lat, lng]);
+    marker.on('mouseout', () => onMarkerUnhover());
+    if (n === 1) { const tx = g.items[0].tx, origIdx = g.items[0].origIdx; marker.bindPopup(makePopup(tx), { maxWidth: 320 }); marker.on('click', () => { activeCardIdx = origIdx; renderResults(); const card = document.querySelector(`.tx-card[data-idx="${origIdx}"]`); if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' }); }); }
+    else marker.on('click', () => showClusterList(g.items));
+    markerClusterGroup.addLayer(marker); boundsArr.push([lat, lng]);
   });
   if (fitBounds && boundsArr.length > 0) map.fitBounds(boundsArr, { padding: [40, 40], maxZoom: 18 });
 }
 
 function makePopup(tx) {
   const cn = tx.community_name ? `<div style="background:var(--green-bg);padding:2px 8px;border-radius:8px;display:inline-block;color:var(--green);font-size:12px;font-weight:600;margin-bottom:4px">🏘️ ${escHtml(tx.community_name)}</div><br>` : '';
-  return `<div style="font-size:13px;line-height:1.6">${cn}<b>${escHtml(tx.address)}</b><br>📅 ${formatDateStr(tx.date_raw)} ｜ 📐 ${fmtArea(tx.area_sqm, tx.area_ping)}<br>💰 <b style="color:var(--red)">${fmtWan(tx.price)}</b> <span style="color:var(--text2)">${fmtUnitPrice(tx.unit_price_ping, tx.unit_price_sqm)}</span><br>🏢 ${tx.rooms || 0}房${tx.halls || 0}廳${tx.baths || 0}衛${tx.floor ? '｜ ' + tx.floor + 'F/' + tx.total_floors + 'F' : ''}${tx.public_ratio > 0 ? '｜ 公設' + tx.public_ratio + '%' : ''}${tx.building_type ? '<br>' + escHtml(tx.building_type) : ''}${tx.has_parking ? '<br>🚗 含車位 ' + fmtWan(tx.parking_price) : ''}${tx.note ? '<br><span style="color:var(--text3);font-size:11px">' + escHtml(tx.note) + '</span>' : ''}</div>`;
+  return `<div style="font-size:13px;line-height:1.6">${cn}<b>${escHtml(tx.address)}</b><br>📅 ${tx.date || '-'} ｜ 📐 ${fmtArea(tx.area_sqm, tx.area_ping)}<br>💰 <b style="color:var(--red)">${fmtWan(tx.price)}</b> <span style="color:var(--text2)">${fmtUnitPrice(tx.unit_price_ping, tx.unit_price_sqm)}</span><br>🏢 ${tx.rooms || 0}房${tx.halls || 0}廳${tx.baths || 0}衛${tx.floor ? '｜ ' + tx.floor + 'F/' + tx.total_floors + 'F' : ''}${tx.public_ratio > 0 ? '｜ 公設' + tx.public_ratio + '%' : ''}${tx.building_type ? '<br>' + escHtml(tx.building_type) : ''}${tx.has_parking ? '<br>🚗 含車位 ' + fmtWan(tx.parking_price) : ''}${tx.note ? '<br><span style="color:var(--text3);font-size:11px">' + escHtml(tx.note) + '</span>' : ''}</div>`;
 }
 
 function selectTx(idx) {
   activeCardIdx = idx; renderResults();
   const tx = txData[idx];
-  if (tx && tx.lat && tx.lng) {
-    map.setView([tx.lat, tx.lng], 17);
-    let found = false;
-    markerClusterGroup.eachLayer(layer => {
-      if (layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) {
-        markerClusterGroup.zoomToShowLayer(layer, () => { if (layer._groupItems.length === 1) layer.openPopup(); });
-        found = true;
-      }
-    });
-    if (!found) {
-      communityClusterGroup.eachLayer(layer => {
-        if (layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) {
-          communityClusterGroup.zoomToShowLayer(layer, () => { if (layer._groupItems.length === 1) layer.openPopup(); });
-        }
-      });
-    }
-  }
+  if (tx && tx.lat && tx.lng) { map.setView([tx.lat, tx.lng], 17); markerClusterGroup.eachLayer(layer => { if (layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) { markerClusterGroup.zoomToShowLayer(layer, () => { if (layer._groupItems.length === 1) layer.openPopup(); }); } }); }
 }
 
 // ── Marker hover → 左側同步 + tooltip ──
+let _markerTooltipEl = null;
 function onMarkerHover(marker, group) {
   // 1. 泡泡跳動
   if (marker._icon) {
@@ -704,34 +652,76 @@ function onMarkerHover(marker, group) {
     const card = document.querySelector(`.tx-card[data-idx="${firstIdx}"]`);
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
+  // 3. 泡泡上方顯示資訊 tooltip
+  showMarkerTooltip(marker, group);
 }
 
 function onMarkerUnhover() {
   stopAllBounce();
+  hideMarkerTooltip();
   document.querySelectorAll('.community-header.hover-highlight').forEach(h => h.classList.remove('hover-highlight'));
-}
-
-function formatDateStr(raw) {
-  if (!raw) return '-';
-  const s = String(raw).trim();
-  if (markerSettings.yearFormat === 'ce' && s.length >= 7) {
-    const y = parseInt(s.substring(0, s.length - 4), 10) + 1911;
-    return y + '/' + s.substring(s.length - 4, s.length - 2) + '/' + s.substring(s.length - 2);
-  } else if (s.length >= 7) {
-    return s.substring(0, s.length - 4) + '/' + s.substring(s.length - 4, s.length - 2) + '/' + s.substring(s.length - 2);
-  }
-  return s;
 }
 
 function fmtBuildDate(raw) {
   if (!raw) return '-';
   const s = String(raw).trim();
-  if (s.length >= 3) {
-    const rocYear = parseInt(s.substring(0, s.length === 5 ? 3 : s.length - 4), 10);
-    const y = markerSettings.yearFormat === 'ce' ? rocYear + 1911 : rocYear;
-    return y + '年';
+  if (s.length >= 7) {
+    const y = parseInt(s.substring(0, 3), 10) + 1911;
+    return y + '/' + s.substring(3, 5);
   }
   return s || '-';
+}
+
+function showMarkerTooltip(marker, group) {
+  hideMarkerTooltip();
+  if (!marker._icon) return;
+  const items = group.items || [];
+  if (items.length === 0) return;
+  const label = group.communityName || group.label || '';
+
+  // Year & floor details
+  const years = items.map(({ tx }) => tx.date_raw ? String(tx.date_raw).substring(0, 3) : '').filter(Boolean);
+  const uniqueYears = [...new Set(years)].sort();
+  const yearRange = uniqueYears.length > 0 ? (uniqueYears.length <= 2 ? uniqueYears.join('-') : uniqueYears[0] + '-' + uniqueYears[uniqueYears.length - 1]) : '-';
+  const floors = items.map(({ tx }) => tx.total_floors).filter(v => v > 0);
+  const maxFloor = floors.length > 0 ? Math.max(...floors) : 0;
+
+  // Area & Types
+  const types = [...new Set(items.map(({ tx }) => tx.building_type).filter(Boolean))];
+  const typeText = types.length > 0 ? types.slice(0, 2).join('/') : '-';
+  const pings = items.map(({ tx }) => tx.area_ping).filter(v => v > 0);
+  const avgPing = pings.length > 0 ? (pings.reduce((a, b) => a + b, 0) / pings.length).toFixed(0) : '-';
+
+  // Completion date, Materials & Uses
+  const completionDates = [...new Set(items.map(({ tx }) => tx.completion_date).filter(Boolean))];
+  const buildDateText = completionDates.length > 0 ? fmtBuildDate(completionDates[0]) : '-';
+  const materials = [...new Set(items.map(({ tx }) => tx.main_material).filter(Boolean))];
+  const materialText = materials.length > 0 ? materials.slice(0, 2).join('/') : '-';
+  const uses = [...new Set(items.map(({ tx }) => tx.main_use).filter(Boolean))];
+  const useText = uses.length > 0 ? uses.slice(0, 2).join('/') : '-';
+
+  const tip = document.createElement('div');
+  tip.className = 'marker-tooltip-info';
+  tip.innerHTML = `
+    ${label ? `<div class="mti-name">${escHtml(label)}</div>` : ''}
+    <div class="mti-row"><span>📅</span> 交易 ${yearRange}年 ｜ 完工 ${buildDateText}</div>
+    ${maxFloor > 0 ? `<div class="mti-row"><span>🏢</span> ${maxFloor}樓 ｜ ${escHtml(typeText)} ${escHtml(materialText)}</div>` : `<div class="mti-row"><span>🏠</span> ${escHtml(typeText)} ${escHtml(materialText)}</div>`}
+    <div class="mti-row"><span>📐</span> 均${avgPing}坪 ｜ ${escHtml(useText)}</div>
+  `;
+  const iconRect = marker._icon.getBoundingClientRect();
+  tip.style.position = 'fixed';
+  tip.style.left = (iconRect.left + iconRect.width / 2) + 'px';
+  tip.style.top = (iconRect.top - 8) + 'px';
+  tip.style.zIndex = '2000';
+  document.body.appendChild(tip);
+  _markerTooltipEl = tip;
+}
+
+function hideMarkerTooltip() {
+  if (_markerTooltipEl) {
+    _markerTooltipEl.remove();
+    _markerTooltipEl = null;
+  }
 }
 
 function addLegend() {
@@ -820,7 +810,6 @@ function applySettings() {
   markerSettings.outerMode = document.getElementById('sOuter').value;
   markerSettings.innerMode = document.getElementById('sInner').value;
   markerSettings.showLotAddr = document.getElementById('sShowLotAddr').checked;
-  markerSettings.yearFormat = document.getElementById('sYearFormat').value;
   localStorage.setItem('markerSettings', JSON.stringify(markerSettings));
   if (txData.length > 0) plotMarkers(false);
   else doAreaSearch();
@@ -837,7 +826,6 @@ function loadSettings() {
   document.getElementById('sOuter').value = markerSettings.outerMode;
   document.getElementById('sInner').value = markerSettings.innerMode;
   document.getElementById('sShowLotAddr').checked = !!markerSettings.showLotAddr;
-  document.getElementById('sYearFormat').value = markerSettings.yearFormat || 'roc';
 
   // Set slider values
   const ut = markerSettings.unitThresholds;
@@ -867,11 +855,16 @@ function toggleAreaAutoSearch(on) {
 }
 
 function updateAreaToggleState() {
+  const z = map ? map.getZoom() : 13;
+  const threshold = markerSettings.osmZoom || 16;
+  const enabled = z >= threshold;
+  const toggle = document.getElementById('areaToggle');
+  const wrap = document.getElementById('areaToggleWrap');
   const label = document.getElementById('areaToggleLabel');
-  const btn = document.getElementById('areaToggle');
-  if (!btn) return;
-  const enabled = btn.checked;
-  if (label) label.textContent = '自動顯示建案';
+  if (!toggle || !wrap) return;
+  toggle.disabled = !enabled;
+  wrap.classList.toggle('disabled', !enabled);
+  if (label) label.textContent = enabled ? '搜此區域' : `放大至${threshold}級`;
 }
 
 function onMapMoveEnd() {
