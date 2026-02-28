@@ -17,7 +17,7 @@ let communitySummaries = {};
 let markerSettings = {
   outerMode: 'unit_price', innerMode: 'total_price',
   contentMode: 'recent2yr',
-  unitThresholds: [20, 40, 70], totalThresholds: [500, 1500, 3000],
+  unitThresholds: [20, 45, 70], totalThresholds: [500, 1750, 3000],
   osmZoom: 16, showLotAddr: false, yearFormat: 'roc'
 };
 let areaAutoSearch = false;
