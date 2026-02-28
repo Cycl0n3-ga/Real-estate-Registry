@@ -22,7 +22,6 @@
     <div class="logo">🏢 良富居地產</div>
     <div class="header-right">
       <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切換深色/淺色模式 (D)">🌙</button>
-      <button class="settings-btn" onclick="toggleSettings()" title="設定">⚙️</button>
     </div>
   </div>
 
@@ -187,11 +186,12 @@
     <!-- ═══ MAP BOTTOM LEFT CONTROLS ═══ -->
     <div class="map-bottom-controls" id="mapBottomControls">
       <div class="mbc-row">
+        <button class="mbc-settings" onclick="toggleSettings()" title="設定">⚙️</button>
         <div class="unit-toggle">
           <button class="active" data-unit="ping" onclick="setUnit('ping')">坪</button>
           <button data-unit="sqm" onclick="setUnit('sqm')">m²</button>
         </div>
-        <div class="mbc-filters">
+        <div class="mbc-filters" id="headerFilters">
           <select id="hfDistrict" title="行政區">
             <option value="">全區域</option>
           </select>

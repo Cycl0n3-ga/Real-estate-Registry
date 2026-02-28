@@ -982,7 +982,8 @@ body {
 /* ═══ Map Bottom Controls ═══ */
 .map-bottom-controls {
   position: absolute;
-  bottom: 24px;
+  bottom: 85px;
+  /* Above the Leaflet legend */
   left: 16px;
   z-index: 1000;
   display: flex;
@@ -1004,11 +1005,35 @@ body {
   flex-wrap: wrap;
 }
 
-.mbc-filters {
+.mbc-settings {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+  transition: var(--transition);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+.mbc-settings:hover {
+  background: var(--border);
+}
+
+.mbc-filters {
+  display: none;
   align-items: center;
   gap: 4px;
   flex-wrap: wrap;
+}
+
+.mbc-filters.show {
+  display: flex;
 }
 
 .mbc-filters select,
