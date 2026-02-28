@@ -606,6 +606,8 @@ body {
 .tx-card:hover {
   background: var(--card-hover);
   border-left-color: var(--primary-light) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .06);
 }
 
 .tx-card.active {
@@ -907,22 +909,75 @@ body {
   transform: scale(1.05);
 }
 
-.map-controls .area-search-btn {
-  width: auto !important;
-  border-radius: 24px !important;
-  padding: 0 20px !important;
-  font-size: 13px !important;
-  font-weight: 700;
-  gap: 6px;
-  height: 40px;
-  background: linear-gradient(135deg, var(--green), #059669) !important;
-  color: #fff !important;
-  box-shadow: 0 4px 15px rgba(16, 185, 129, .3);
+/* ═══ Area Toggle (Header) ═══ */
+.area-toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 8px;
+  padding: 3px 10px;
+  background: rgba(255, 255, 255, .12);
+  border-radius: 20px;
+  backdrop-filter: blur(8px);
+  transition: opacity var(--transition), filter var(--transition);
 }
 
-.map-controls .area-search-btn:hover {
-  transform: scale(1.03);
-  box-shadow: 0 6px 20px rgba(16, 185, 129, .4);
+.area-toggle-wrap.disabled {
+  opacity: .45;
+  filter: grayscale(.5);
+  pointer-events: none;
+}
+
+.area-toggle {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.area-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.area-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: rgba(255, 255, 255, .25);
+  border-radius: 20px;
+  transition: background .25s;
+}
+
+.area-toggle-slider::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform .25s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+}
+
+.area-toggle input:checked+.area-toggle-slider {
+  background: var(--green);
+}
+
+.area-toggle input:checked+.area-toggle-slider::before {
+  transform: translateX(16px);
+}
+
+.area-toggle-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, .85);
+  white-space: nowrap;
+  letter-spacing: .3px;
 }
 
 /* Marker */
@@ -977,9 +1032,72 @@ body {
 }
 
 .marker-bounce {
-  animation: markerBounce .65s ease;
-  animation-iteration-count: 3;
+  animation: markerBounce .65s ease infinite;
   animation-fill-mode: both;
+}
+
+/* ── Sort Arrow ── */
+.sort-arrow {
+  font-size: 9px;
+  margin-left: 1px;
+  opacity: .8;
+}
+
+/* ── Community Header Hover Highlight ── */
+.community-header.hover-highlight {
+  background: linear-gradient(135deg, rgba(16, 185, 129, .2), rgba(6, 182, 212, .12)) !important;
+  box-shadow: inset 0 0 0 2px rgba(16, 185, 129, .35);
+  transition: all .2s ease;
+}
+
+/* ── Marker Tooltip Info ── */
+.marker-tooltip-info {
+  transform: translate(-50%, -100%);
+  background: var(--card, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  padding: 8px 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .15);
+  font-size: 11px;
+  line-height: 1.6;
+  pointer-events: none;
+  white-space: nowrap;
+  animation: tooltipFadeIn .15s ease;
+  backdrop-filter: blur(8px);
+  min-width: 100px;
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -90%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, -100%);
+  }
+}
+
+.marker-tooltip-info .mti-name {
+  font-weight: 800;
+  font-size: 12px;
+  color: var(--green, #10b981);
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  padding-bottom: 3px;
+}
+
+.marker-tooltip-info .mti-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text2, #64748b);
+  font-weight: 500;
+}
+
+.marker-tooltip-info .mti-row span {
+  font-size: 12px;
 }
 
 /* ════════ Settings Panel ════════ */
@@ -1327,10 +1445,13 @@ body {
     font-size: 18px;
   }
 
-  .map-controls .area-search-btn {
-    font-size: 12px !important;
-    padding: 0 14px !important;
-    height: 36px;
+  .area-toggle-wrap {
+    padding: 2px 6px;
+    gap: 4px;
+  }
+
+  .area-toggle-label {
+    font-size: 10px;
   }
 
   .settings-panel {

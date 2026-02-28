@@ -42,6 +42,13 @@
       <input id="hfYearMax" type="number" placeholder="民國迄" min="80" max="120" title="民國年結束">
       <button class="hf-apply" onclick="applyHeaderFilters()">套用</button>
     </div>
+    <div class="area-toggle-wrap" id="areaToggleWrap" title="地圖≥16級時自動搜尋此區域交易">
+      <label class="area-toggle">
+        <input type="checkbox" id="areaToggle" onchange="toggleAreaAutoSearch(this.checked)">
+        <span class="area-toggle-slider"></span>
+      </label>
+      <span class="area-toggle-label" id="areaToggleLabel">搜此區域</span>
+    </div>
     <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切換深色/淺色模式 (D)">🌙</button>
     <button class="settings-btn" onclick="toggleSettings()" title="圓圈顯示設定">⚙️</button>
   </div>
@@ -53,15 +60,15 @@
     <div class="settings-group">
       <div class="settings-group-title">🔴 外環顏色</div>
       <select id="sOuter" onchange="applySettings()">
-        <option value="total_price">總價</option>
         <option value="unit_price">單價/坪</option>
+        <option value="total_price">總價</option>
       </select>
     </div>
     <div class="settings-group">
       <div class="settings-group-title">🟢 內圈顏色</div>
       <select id="sInner" onchange="applySettings()">
-        <option value="unit_price">單價/坪</option>
         <option value="total_price">總價</option>
+        <option value="unit_price">單價/坪</option>
       </select>
     </div>
     <div class="settings-group">
@@ -200,7 +207,6 @@
     <div id="map"></div>
     <div id="mapBlur"></div>
     <div class="map-controls">
-      <button class="area-search-btn" onclick="doAreaSearch()" title="搜尋目前地圖範圍內的成交紀錄">🔍 搜此區域</button>
       <button onclick="locateMe()" title="移動到我的位置">📍</button>
       <button onclick="map.zoomIn()" title="放大">＋</button>
       <button onclick="map.zoomOut()" title="縮小">－</button>

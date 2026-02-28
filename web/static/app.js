@@ -7,17 +7,21 @@ let map, markerClusterGroup, markerGroup;
 let txData = [];
 let activeCardIdx = -1;
 let currentSort = 'date';
+let sortDirection = 'desc';
 let lastSearchType = '';
 let unit = 'ping';
 let locationMarker, locationCircle;
 let collapsedCommunities = {};
+let _lastBouncingEls = [];
 let communitySummaries = {};
 let markerSettings = {
-  outerMode: 'total_price', innerMode: 'unit_price',
+  outerMode: 'unit_price', innerMode: 'total_price',
   contentMode: 'recent2yr',
   unitThresholds: [20, 40, 70], totalThresholds: [500, 1500, 3000],
   osmZoom: 16, showLotAddr: false
 };
+let areaAutoSearch = false;
+let _areaSearchTimer = null;
 
 // ── 工具函式 ──
 const escHtml = s => s ? String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
@@ -55,7 +59,6 @@ function setUnit(u) {
 // ── 地圖初始化 ──
 function initMap() {
   map = L.map('map', { center: [25.033, 121.565], zoom: 13, zoomControl: false });
-  L.control.zoom({ position: 'bottomright' }).addTo(map);
 
   // 圖層切換
   const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
@@ -125,6 +128,11 @@ function initMap() {
   markerClusterGroup.on('unspiderfied', () => { document.getElementById('mapBlur').classList.remove('active'); });
   map.on('click', () => { document.getElementById('mapBlur').classList.remove('active'); });
   addLegend();
+
+  // ── 搜此區域 auto-search 事件 ──
+  map.on('moveend', onMapMoveEnd);
+  map.on('zoomend', updateAreaToggleState);
+  updateAreaToggleState();
 }
 
 // ── 篩選面板 ──
@@ -163,20 +171,36 @@ function getHeaderFilterParams() {
 
 // ── 排序 ──
 function sortData(sortType) {
+  const dir = sortDirection === 'asc' ? 1 : -1;
   const sorters = {
-    date: (a, b) => (b.date_raw || '').localeCompare(a.date_raw || ''),
-    price: (a, b) => (b.price || 0) - (a.price || 0),
-    unit_price: (a, b) => (b.unit_price_ping || 0) - (a.unit_price_ping || 0),
-    ping: (a, b) => (b.area_ping || 0) - (a.area_ping || 0),
-    public_ratio: (a, b) => (a.public_ratio || 999) - (b.public_ratio || 999),
-    community: (a, b) => { const ca = a.community_name || '', cb2 = b.community_name || ''; if (ca && !cb2) return -1; if (!ca && cb2) return 1; if (ca !== cb2) return ca.localeCompare(cb2); return (b.date_raw || '').localeCompare(a.date_raw || ''); }
+    date: (a, b) => dir * (b.date_raw || '').localeCompare(a.date_raw || ''),
+    price: (a, b) => dir * ((b.price || 0) - (a.price || 0)),
+    unit_price: (a, b) => dir * ((b.unit_price_ping || 0) - (a.unit_price_ping || 0)),
+    ping: (a, b) => dir * ((b.area_ping || 0) - (a.area_ping || 0)),
+    public_ratio: (a, b) => dir * ((a.public_ratio || 999) - (b.public_ratio || 999)),
+    community: (a, b) => { const ca = a.community_name || '', cb2 = b.community_name || ''; if (ca && !cb2) return -1; if (!ca && cb2) return 1; if (ca !== cb2) return dir * ca.localeCompare(cb2); return dir * (b.date_raw || '').localeCompare(a.date_raw || ''); }
   };
   if (sorters[sortType]) txData.sort(sorters[sortType]);
 }
 function setSort(btn) {
-  document.querySelectorAll('.sort-bar button[data-sort]').forEach(b => b.classList.remove('active'));
+  const newSort = btn.dataset.sort;
+  if (currentSort === newSort) {
+    sortDirection = sortDirection === 'desc' ? 'asc' : 'desc';
+  } else {
+    currentSort = newSort;
+    sortDirection = 'desc';
+  }
+  document.querySelectorAll('.sort-bar button[data-sort]').forEach(b => {
+    b.classList.remove('active');
+    // 移除舊箭頭
+    const oldArrow = b.querySelector('.sort-arrow');
+    if (oldArrow) oldArrow.remove();
+  });
   btn.classList.add('active');
-  currentSort = btn.dataset.sort;
+  const arrow = document.createElement('span');
+  arrow.className = 'sort-arrow';
+  arrow.textContent = sortDirection === 'desc' ? ' ▼' : ' ▲';
+  btn.appendChild(arrow);
   if (txData.length > 0) { sortData(currentSort); renderResults(); plotMarkers(false); }
 }
 function rerunSearch() { if (lastSearchType === 'area') doAreaSearch(); else if (lastSearchType === 'keyword') doSearch(); }
@@ -226,29 +250,39 @@ function positionAcList() {
   const input = document.getElementById('searchInput'), list = document.getElementById('acList'), rect = input.getBoundingClientRect();
   list.style.left = rect.left + 'px'; list.style.top = (rect.bottom + 2) + 'px'; list.style.width = (rect.right - rect.left + 60) + 'px';
 }
+function stopAllBounce() {
+  _lastBouncingEls.forEach(el => { if (el) el.classList.remove('marker-bounce'); });
+  _lastBouncingEls = [];
+}
+function bounceElement(el) {
+  stopAllBounce();
+  el.classList.remove('marker-bounce'); void el.offsetWidth;
+  el.classList.add('marker-bounce');
+  _lastBouncingEls = [el];
+}
 function hoverTx(idx) {
   let targetMarker = null;
   markerClusterGroup.eachLayer(layer => { if (!targetMarker && layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) targetMarker = layer; });
   if (!targetMarker) return;
-  // 只在 marker 不在可視範圍時才移動地圖
   const ll = targetMarker.getLatLng();
   if (!map.getBounds().contains(ll)) {
     map.panTo(ll, { animate: true, duration: 0.25 });
   }
-  // 無論如何都要持續跳動動畫
   const tryBounce = () => {
     const iconEl = targetMarker._icon;
     if (!iconEl) return;
     const inner = iconEl.firstElementChild || iconEl;
-    inner.classList.remove('marker-bounce'); void inner.offsetWidth;
-    inner.classList.add('marker-bounce');
+    bounceElement(inner);
   };
-  // marker 可能在叢集中，先展開再動畫
   if (targetMarker._icon) tryBounce();
   else markerClusterGroup.zoomToShowLayer(targetMarker, () => setTimeout(tryBounce, 100));
 }
+function unhoverTx() {
+  stopAllBounce();
+  hideMarkerTooltip();
+}
 function hoverCommunity(name) {
-  // 找到所有屬於該建案的 markers 並跳動
+  stopAllBounce();
   const matchedMarkers = [];
   markerClusterGroup.eachLayer(layer => {
     if (layer._groupLabel === name || (layer._groupItems && layer._groupItems.some(it => it.tx.community_name === name))) {
@@ -256,22 +290,23 @@ function hoverCommunity(name) {
     }
   });
   if (matchedMarkers.length === 0) return;
-  // 檢查是否有任何 marker 在可視範圍
   const bounds = map.getBounds();
   const anyVisible = matchedMarkers.some(m => m._icon && bounds.contains(m.getLatLng()));
   if (!anyVisible) {
-    // 都不可見，pan 到第一個
     map.panTo(matchedMarkers[0].getLatLng(), { animate: true, duration: 0.3 });
   }
-  // 對所有可見的 marker 跳動
-  setTimeout(() => {
-    matchedMarkers.forEach(m => {
-      if (!m._icon) return;
-      const inner = m._icon.firstElementChild || m._icon;
-      inner.classList.remove('marker-bounce'); void inner.offsetWidth;
-      inner.classList.add('marker-bounce');
-    });
-  }, anyVisible ? 0 : 350);
+  // 只跳第一個可見的 marker
+  const firstVisible = matchedMarkers.find(m => m._icon && bounds.contains(m.getLatLng())) || matchedMarkers[0];
+  const doBounce = () => {
+    if (!firstVisible._icon) return;
+    const inner = firstVisible._icon.firstElementChild || firstVisible._icon;
+    bounceElement(inner);
+  };
+  if (firstVisible._icon) doBounce();
+  else setTimeout(doBounce, 350);
+}
+function unhoverCommunity() {
+  stopAllBounce();
 }
 document.addEventListener('click', e => { if (!e.target.closest('.autocomplete-wrap')) hideAcList(); });
 
@@ -347,7 +382,7 @@ function renderResults() {
     html += `<div class="community-group">`;
     const inlineStats = stats ? [stats.avg_unit_price_ping > 0 ? `均單 ${(stats.avg_unit_price_ping / 10000).toFixed(0)}萬/坪` : '', stats.avg_ping > 0 ? `均坪 ${stats.avg_ping.toFixed(0)}坪` : '', stats.avg_ratio > 0 ? `公設 ${stats.avg_ratio.toFixed(0)}%` : ''
     ].filter(Boolean) : [];
-    html += `<div class="community-header" onclick="toggleCommunity(this,'${escAttr(cn)}')" onmouseenter="hoverCommunity('${escAttr(cn)}')">
+    html += `<div class="community-header" onclick="toggleCommunity(this,'${escAttr(cn)}')" onmouseenter="hoverCommunity('${escAttr(cn)}')" onmouseleave="unhoverCommunity()">
       <span class="ch-arrow ${isCollapsed ? '' : 'open'}">▶</span>
       <div style="flex:1;min-width:0"><div class="ch-name">${escHtml(cn)}</div>
       ${inlineStats.length ? `<div class="ch-stats-inline">${inlineStats.map(s => `<span>${s}</span>`).join('')}</div>` : ''}</div>
@@ -387,7 +422,7 @@ function renderTxCard(tx, idx, inGroup) {
   const specialCls = tx.is_special ? ' special' : '';
   const specialBadge = tx.is_special ? '<span class="special-badge">特殊</span>' : '';
   const parkingTag = tx.has_parking ? `<span class="tx-parking-tag">🚗 含車位${tx.parking_price > 0 ? ' ' + fmtWan(tx.parking_price) : ''}</span>` : '';
-  return `<div class="tx-card${isActive ? ' active' : ''}${priceClass}${specialCls}" onclick="selectTx(${idx})" onmouseenter="hoverTx(${idx})" data-idx="${idx}">
+  return `<div class="tx-card${isActive ? ' active' : ''}${priceClass}${specialCls}" onclick="selectTx(${idx})" onmouseenter="hoverTx(${idx})" onmouseleave="unhoverTx()" data-idx="${idx}">
     ${colorDot}
     <div class="tx-addr" title="${escAttr(tx.address)}">${escHtml(tx.address)}${specialBadge}</div>
     ${cnRow}
@@ -438,38 +473,73 @@ function renderSummary() {
 function baseAddress(addr) { if (!addr) return ''; return addr.replace(/\d+樓.*$/, '').replace(/\d+F.*$/i, '').replace(/地下.*$/, ''); }
 function stripCityJS(addr) { if (!addr) return ''; let s = addr.replace(/^(?:(?:台|臺)(?:北|中|南|東)市|(?:新北|桃園|高雄|基隆|新竹|嘉義)[市縣]|.{2,3}縣)/, ''); s = s.replace(/^[\u4e00-\u9fff]{1,4}[區鄉鎮市]/, ''); return s; }
 
+function extractDistrict(tx) {
+  // 從地址中提取行政區（如信義區、大安區）
+  const addr = tx.address_raw || tx.address || '';
+  const m = addr.match(/([\u4e00-\u9fff]{1,4}[區鄉鎮市])/);
+  return m ? m[1] : (tx.district || '');
+}
+
 function buildGroups() {
   const raw = {};
   txData.forEach((tx, idx) => {
     if (!tx.lat || !tx.lng) return;
     if (!markerSettings.showLotAddr && isLotAddress(tx.address_raw || tx.address || '')) return;
     let key;
-    // 縮小時：同建案一律合併
-    if (tx.community_name) key = 'c:' + tx.community_name;
-    else key = 'a:' + baseAddress(tx.address_raw || tx.address);
-    if (!raw[key]) raw[key] = { label: tx.community_name || stripCityJS(baseAddress(tx.address)), communityName: tx.community_name || '', items: [], lats: [], lngs: [], prices: [], unitPrices: [] };
+    // 同建案名 + 同區 才合併（不同區視為不同建案）
+    if (tx.community_name) {
+      const dist = extractDistrict(tx);
+      key = 'c:' + tx.community_name + '@' + dist;
+    } else {
+      key = 'a:' + baseAddress(tx.address_raw || tx.address);
+    }
+    if (!raw[key]) raw[key] = { label: tx.community_name || stripCityJS(baseAddress(tx.address)), communityName: tx.community_name || '', hasCommunity: !!tx.community_name, items: [], lats: [], lngs: [], prices: [], unitPrices: [] };
     const g = raw[key]; g.items.push({ tx, origIdx: idx }); g.lats.push(tx.lat); g.lngs.push(tx.lng);
     if (tx.price > 0) g.prices.push(tx.price); if (tx.unit_price_ping > 0) g.unitPrices.push(tx.unit_price_ping);
   });
   const arr = Object.values(raw), len = arr.length;
   arr.forEach(g => { const sLat = g.lats.slice().sort((a, b) => a - b), sLng = g.lngs.slice().sort((a, b) => a - b), m = Math.floor(sLat.length / 2); g._cLat = sLat[m]; g._cLng = sLng[m]; });
 
-  // ── Phase 3: Union-Find 近距離合併（≈28m 內視為同位置）──
-  //    0.00025° ≈ 28m(lat) / 25m(lng) @ 25°N
-  const MERGE = 0.00025;
+  // ── Phase 3: Union-Find 近距離合併 ──
+  //    有建案名：≈28m 以內合併
+  //    無建案名：≈8m 以內才合併（避免不同交易被誤合）
+  //    有建案 vs 無建案：不合併
+  const MERGE_COM = 0.00025;    // ≈ 28m for community groups
+  const MERGE_NO_COM = 0.00008; // ≈ 8m for non-community (OSM precise)
   const par = Array.from({ length: len }, (_, i) => i);
   function find(x) { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; }
-  for (let i = 0; i < len; i++)
-    for (let j = i + 1; j < len; j++)
-      if (Math.abs(arr[i]._cLat - arr[j]._cLat) < MERGE &&
-        Math.abs(arr[i]._cLng - arr[j]._cLng) < MERGE)
-        par[find(i)] = find(j);
+  const grid = {};
+  const GRID_SIZE = MERGE_COM; // use larger grid for spatial index
+  for (let i = 0; i < len; i++) {
+    const cx = Math.floor(arr[i]._cLat / GRID_SIZE);
+    const cy = Math.floor(arr[i]._cLng / GRID_SIZE);
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++) {
+        const nk = `${cx + dx},${cy + dy}`;
+        if (grid[nk]) grid[nk].forEach(j => {
+          const gi = arr[i], gj = arr[j];
+          // 有建案 vs 無建案不合併
+          if (gi.hasCommunity !== gj.hasCommunity) return;
+          // 選擇合併半徑
+          const mergeR = gi.hasCommunity ? MERGE_COM : MERGE_NO_COM;
+          if (Math.abs(gi._cLat - gj._cLat) < mergeR &&
+            Math.abs(gi._cLng - gj._cLng) < mergeR)
+            par[find(i)] = find(j);
+        });
+      }
+    const k = `${cx},${cy}`;
+    (grid[k] = grid[k] || []).push(i);
+  }
   const buckets = {}; for (let i = 0; i < len; i++) { const r = find(i); if (!buckets[r]) buckets[r] = []; buckets[r].push(arr[i]); }
   const merged = Object.values(buckets).map(gs => {
     if (gs.length === 1) return gs[0];
-    const m = { items: [], lats: [], lngs: [], prices: [], unitPrices: [] }; const lbls = [];
-    gs.forEach(g => { m.items.push(...g.items); m.lats.push(...g.lats); m.lngs.push(...g.lngs); m.prices.push(...g.prices); m.unitPrices.push(...g.unitPrices); if (g.label) lbls.push(g.label); if (g.communityName) m.communityName = g.communityName; });
-    const ul = [...new Set(lbls)]; if (ul.length <= 1) m.label = ul[0] || ''; else if (ul.length === 2) m.label = ul.join('·'); else m.label = ul[0] + '等' + ul.length + '案';
+    const m = { items: [], lats: [], lngs: [], prices: [], unitPrices: [], hasCommunity: gs[0].hasCommunity }; const lbls = []; const comNames = [];
+    gs.forEach(g => { m.items.push(...g.items); m.lats.push(...g.lats); m.lngs.push(...g.lngs); m.prices.push(...g.prices); m.unitPrices.push(...g.unitPrices); if (g.label) lbls.push(g.label); if (g.communityName) { m.communityName = g.communityName; comNames.push(g.communityName); } });
+    // 優先使用建案名作為標籤
+    const uniqueComs = [...new Set(comNames)];
+    if (uniqueComs.length === 1) m.label = uniqueComs[0];
+    else if (uniqueComs.length > 1) m.label = uniqueComs[0] + '·' + uniqueComs.slice(1).join('·');
+    else { const ul = [...new Set(lbls)]; if (ul.length <= 1) m.label = ul[0] || ''; else if (ul.length === 2) m.label = ul.join('·'); else m.label = ul[0] + '等' + ul.length + '案'; }
     return m;
   });
   const nowYear = new Date().getFullYear() - 1911, twoYearThreshold = (nowYear - 2) * 10000;
@@ -524,6 +594,9 @@ function plotMarkers(fitBounds = true) {
     const icon = L.divIcon({ html: `<div style="display:flex;flex-direction:column;align-items:center">${svgHtml}${labelHtml}</div>`, iconSize: [sz + 8, totalH], iconAnchor: [(sz + 8) / 2, totalH / 2], className: 'price-marker' });
     const marker = L.marker([lat, lng], { icon });
     marker._groupCount = n; marker._avgPrice = avgPrice; marker._avgUnitPrice = avgUnitPrice; marker._groupLabel = g.label; marker._groupItems = g.items;
+    // ── Marker hover：左側跳到對應 + 顯示 tooltip ──
+    marker.on('mouseover', () => onMarkerHover(marker, g));
+    marker.on('mouseout', () => onMarkerUnhover());
     if (n === 1) { const tx = g.items[0].tx, origIdx = g.items[0].origIdx; marker.bindPopup(makePopup(tx), { maxWidth: 320 }); marker.on('click', () => { activeCardIdx = origIdx; renderResults(); const card = document.querySelector(`.tx-card[data-idx="${origIdx}"]`); if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' }); }); }
     else marker.on('click', () => showClusterList(g.items));
     markerClusterGroup.addLayer(marker); boundsArr.push([lat, lng]);
@@ -542,17 +615,99 @@ function selectTx(idx) {
   if (tx && tx.lat && tx.lng) { map.setView([tx.lat, tx.lng], 17); markerClusterGroup.eachLayer(layer => { if (layer._groupItems && layer._groupItems.some(it => it.origIdx === idx)) { markerClusterGroup.zoomToShowLayer(layer, () => { if (layer._groupItems.length === 1) layer.openPopup(); }); } }); }
 }
 
+// ── Marker hover → 左側同步 + tooltip ──
+let _markerTooltipEl = null;
+function onMarkerHover(marker, group) {
+  // 1. 泡泡跳動
+  if (marker._icon) {
+    const inner = marker._icon.firstElementChild || marker._icon;
+    bounceElement(inner);
+  }
+  // 2. 左側列表跳到對應建案/交易
+  const cn = group.communityName || group.label || '';
+  if (cn) {
+    // 展開並滾動到建案 header
+    const headerId = 'citems-' + cssId(cn);
+    const headerEl = document.querySelector(`.community-header .ch-name`);
+    const allHeaders = document.querySelectorAll('.community-header');
+    for (const h of allHeaders) {
+      const nameEl = h.querySelector('.ch-name');
+      if (nameEl && nameEl.textContent.trim() === cn) {
+        h.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        h.classList.add('hover-highlight');
+        break;
+      }
+    }
+  } else if (group.items.length > 0) {
+    const firstIdx = group.items[0].origIdx;
+    const card = document.querySelector(`.tx-card[data-idx="${firstIdx}"]`);
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  // 3. 泡泡上方顯示資訊 tooltip
+  showMarkerTooltip(marker, group);
+}
+
+function onMarkerUnhover() {
+  stopAllBounce();
+  hideMarkerTooltip();
+  // 移除 hover 高亮
+  document.querySelectorAll('.community-header.hover-highlight').forEach(h => h.classList.remove('hover-highlight'));
+}
+
+function showMarkerTooltip(marker, group) {
+  hideMarkerTooltip();
+  if (!marker._icon) return;
+  const items = group.items || [];
+  if (items.length === 0) return;
+  // 算出資訊
+  const years = items.map(({ tx }) => tx.date_raw ? String(tx.date_raw).substring(0, 3) : '').filter(Boolean);
+  const uniqueYears = [...new Set(years)].sort();
+  const yearRange = uniqueYears.length > 0 ? (uniqueYears.length <= 2 ? uniqueYears.join('-') : uniqueYears[0] + '-' + uniqueYears[uniqueYears.length - 1]) : '-';
+  const floors = items.map(({ tx }) => tx.total_floors).filter(v => v > 0);
+  const maxFloor = floors.length > 0 ? Math.max(...floors) : 0;
+  const types = [...new Set(items.map(({ tx }) => tx.building_type).filter(Boolean))];
+  const typeText = types.length > 0 ? types.slice(0, 2).join('/') : '-';
+  const pings = items.map(({ tx }) => tx.area_ping).filter(v => v > 0);
+  const avgPing = pings.length > 0 ? (pings.reduce((a, b) => a + b, 0) / pings.length).toFixed(0) : '-';
+  const label = group.communityName || group.label || '';
+
+  const tip = document.createElement('div');
+  tip.className = 'marker-tooltip-info';
+  tip.innerHTML = `
+    ${label ? `<div class="mti-name">${escHtml(label)}</div>` : ''}
+    <div class="mti-row"><span>📅</span> 民${yearRange}年</div>
+    ${maxFloor > 0 ? `<div class="mti-row"><span>🏢</span> ${maxFloor}樓</div>` : ''}
+    <div class="mti-row"><span>🏠</span> ${typeText}</div>
+    <div class="mti-row"><span>📐</span> 均${avgPing}坪</div>
+  `;
+  // 定位到 marker 上方
+  const iconRect = marker._icon.getBoundingClientRect();
+  tip.style.position = 'fixed';
+  tip.style.left = (iconRect.left + iconRect.width / 2) + 'px';
+  tip.style.top = (iconRect.top - 8) + 'px';
+  tip.style.zIndex = '2000';
+  document.body.appendChild(tip);
+  _markerTooltipEl = tip;
+}
+
+function hideMarkerTooltip() {
+  if (_markerTooltipEl) {
+    _markerTooltipEl.remove();
+    _markerTooltipEl = null;
+  }
+}
+
 function addLegend() {
   const legend = L.control({ position: 'bottomleft' });
   legend.onAdd = function () {
     const div = L.DomUtil.create('div', '');
     div.innerHTML = `<div style="background:var(--card);padding:10px 12px;border-radius:var(--radius);box-shadow:var(--shadow-md);font-size:11px;line-height:1.8;min-width:170px;border:1px solid var(--border)">
       <div style="font-weight:700;margin-bottom:4px;font-size:12px">🎯 雙圈色彩圖例</div>
-      <div style="font-weight:600;font-size:10px;color:var(--primary);margin-bottom:2px">● 外環＝總價 ｜ ● 內圈＝單價/坪</div>
-      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#1b5e20" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#1b5e20"/></svg><span>低（＜500萬/＜20萬）</span></div>
-      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#f57f17" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#f57f17"/></svg><span>中（500-1500/20-40萬）</span></div>
-      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#e65100" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#e65100"/></svg><span>中高（1500-3000/40-70萬）</span></div>
-      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#b71c1c" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#b71c1c"/></svg><span>高（＞3000萬/＞70萬）</span></div>
+      <div style="font-weight:600;font-size:10px;color:var(--primary);margin-bottom:2px">● 外環＝單價/坪 ｜ ● 內圈＝總價</div>
+      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#1b5e20" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#1b5e20"/></svg><span>低（＜20萬/坪 / ＜500萬）</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#f57f17" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#f57f17"/></svg><span>中（20-40萬 / 500-1500萬）</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#e65100" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#e65100"/></svg><span>中高（40-70萬 / 1500-3000萬）</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#b71c1c" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#b71c1c"/></svg><span>高（＞70萬/坪 / ＞3000萬）</span></div>
       <div style="font-weight:600;margin-top:6px;font-size:10px;color:var(--text2)">📊 圈內＝近2年均價(排除特殊)</div>
     </div>`;
     L.DomEvent.disableScrollPropagation(div); L.DomEvent.disableClickPropagation(div); return div;
@@ -616,9 +771,54 @@ document.addEventListener('keydown', e => {
   if (e.key === '/' || e.key === 's') { document.getElementById('searchInput').focus(); e.preventDefault(); }
 });
 
+// ── 搜此區域 Toggle ──
+function toggleAreaAutoSearch(on) {
+  areaAutoSearch = on;
+  try { localStorage.setItem('areaAutoSearch', on ? '1' : '0'); } catch (e) { }
+  updateAreaToggleState();
+  if (on && map && map.getZoom() >= (markerSettings.osmZoom || 16)) {
+    doAreaSearch();
+  }
+}
+
+function updateAreaToggleState() {
+  const z = map ? map.getZoom() : 13;
+  const threshold = markerSettings.osmZoom || 16;
+  const enabled = z >= threshold;
+  const toggle = document.getElementById('areaToggle');
+  const wrap = document.getElementById('areaToggleWrap');
+  const label = document.getElementById('areaToggleLabel');
+  if (!toggle || !wrap) return;
+  toggle.disabled = !enabled;
+  wrap.classList.toggle('disabled', !enabled);
+  if (label) label.textContent = enabled ? '搜此區域' : `放大至${threshold}級`;
+}
+
+function onMapMoveEnd() {
+  if (!areaAutoSearch) return;
+  const z = map.getZoom();
+  if (z < (markerSettings.osmZoom || 16)) return;
+  clearTimeout(_areaSearchTimer);
+  _areaSearchTimer = setTimeout(() => {
+    if (areaAutoSearch && map.getZoom() >= (markerSettings.osmZoom || 16)) {
+      doAreaSearch();
+    }
+  }, 800);
+}
+
 // ── 初始化 ──
 document.addEventListener('DOMContentLoaded', () => {
   loadTheme(); loadSettings(); initMap();
+  // 復原 auto-search toggle 狀態
+  try {
+    const saved = localStorage.getItem('areaAutoSearch');
+    if (saved === '1') {
+      areaAutoSearch = true;
+      const cb = document.getElementById('areaToggle');
+      if (cb) cb.checked = true;
+    }
+  } catch (e) { }
+  updateAreaToggleState();
   window.addEventListener('resize', hideAcList);
   if (window.innerWidth <= 768) { map.on('click', () => { document.getElementById('sidebar').classList.remove('open'); }); }
 });
