@@ -876,6 +876,15 @@ body {
   opacity: 1;
 }
 
+/* Spiderfied markers above blur */
+.leaflet-marker-pane {
+  z-index: 600 !important;
+}
+
+.leaflet-marker-pane .leaflet-marker-icon {
+  z-index: 610 !important;
+}
+
 /* Map controls */
 .map-controls {
   position: absolute;

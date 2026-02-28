@@ -40,7 +40,7 @@ for p in [str(BASE_DIR), str(ADDR_MATCH_DIR), str(COM2ADDR_DIR),
         sys.path.insert(0, p)
 
 # ── 匯入模組 ─────────────────────────────────────────────────────────────────
-from address_match import search_address, parse_range, SORT_OPTIONS
+from address_match import search_address
 from address_utils import fullwidth_to_halfwidth, normalize_address, parse_query
 from community2address import Community2AddressLookup
 from address2community import lookup as addr2com_lookup
@@ -54,6 +54,8 @@ from search_area import (
     search_area as _search_area_db,
     search_by_community_name as _search_by_community_name_db,
     build_filter_where as _build_filter_where,
+    build_community_coords_cache as _build_coords_cache,
+    parse_filters as _parse_filters,
     SELECT_COLS,
 )
 from com_match import CommunityMatcher
@@ -122,24 +124,9 @@ def _set_cache(cache_key, result):
 
 
 def _build_community_coords_cache():
-    """建立建案平均座標快取（啟動時呼叫，約 2-3 秒）"""
+    """建立建案平均座標快取（委派至 search_area 模組）"""
     global _community_coords_cache
-    try:
-        t0 = time.time()
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.execute("""
-            SELECT community_name, AVG(lat) AS avg_lat, AVG(lng) AS avg_lng
-            FROM land_transaction
-            WHERE community_name IS NOT NULL AND community_name != ''
-              AND lat IS NOT NULL AND lat != 0
-              AND lng IS NOT NULL AND lng != 0
-            GROUP BY community_name
-        """)
-        _community_coords_cache = {row[0]: (row[1], row[2]) for row in cursor}
-        conn.close()
-        print(f"📍 建案座標快取: {len(_community_coords_cache)} 個建案 ({time.time()-t0:.2f}s)")
-    except Exception as e:
-        print(f"⚠️  建案座標快取建立失敗: {e}")
+    _community_coords_cache = _build_coords_cache(DB_PATH)
 
 def init_com2addr():
     """背景初始化 com2address 查詢引擎"""
@@ -220,33 +207,8 @@ def _search_by_community_name(community_name: str, filters: dict, limit: int) ->
 
 
 def parse_filters_from_request() -> dict:
-    """從 request.args 解析篩選參數"""
-    filters = {}
-
-    btype = request.args.get("building_type", "").strip()
-    if btype:
-        filters["building_types"] = [t.strip() for t in btype.split(",") if t.strip()]
-
-    rooms = request.args.get("rooms", "").strip()
-    if rooms:
-        filters["rooms"] = [int(r) for r in rooms.split(",") if r.strip().isdigit()]
-
-    for key, fmin, fmax in [
-        ("public_ratio", "public_ratio_min", "public_ratio_max"),
-        ("year", "year_min", "year_max"),
-        ("ping", "ping_min", "ping_max"),
-        ("unit_price", "unit_price_min", "unit_price_max"),
-        ("price", "price_min", "price_max"),
-    ]:
-        val = request.args.get(key, "").strip()
-        if val:
-            lo, hi = parse_range(val)
-            if lo is not None:
-                filters[fmin] = lo
-            if hi is not None:
-                filters[fmax] = hi
-
-    return filters
+    """從 request.args 解析篩選參數（委派至 search_area.parse_filters）"""
+    return _parse_filters(request.args)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

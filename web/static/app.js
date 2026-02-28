@@ -22,6 +22,7 @@ let markerSettings = {
 };
 let areaAutoSearch = false;
 let _areaSearchTimer = null;
+let _hoverPanSuppressed = false;  // prevent hover panTo → area reload loop
 
 // ── 工具函式 ──
 const escHtml = s => s ? String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
@@ -266,7 +267,9 @@ function hoverTx(idx) {
   if (!targetMarker) return;
   const ll = targetMarker.getLatLng();
   if (!map.getBounds().contains(ll)) {
+    _hoverPanSuppressed = true;
     map.panTo(ll, { animate: true, duration: 0.25 });
+    setTimeout(() => { _hoverPanSuppressed = false; }, 600);
   }
   const tryBounce = () => {
     const iconEl = targetMarker._icon;
@@ -293,7 +296,9 @@ function hoverCommunity(name) {
   const bounds = map.getBounds();
   const anyVisible = matchedMarkers.some(m => m._icon && bounds.contains(m.getLatLng()));
   if (!anyVisible) {
+    _hoverPanSuppressed = true;
     map.panTo(matchedMarkers[0].getLatLng(), { animate: true, duration: 0.3 });
+    setTimeout(() => { _hoverPanSuppressed = false; }, 600);
   }
   // 只跳第一個可見的 marker
   const firstVisible = matchedMarkers.find(m => m._icon && bounds.contains(m.getLatLng())) || matchedMarkers[0];
@@ -355,7 +360,7 @@ function handleSearchResult(data, fitBounds = true) {
   window._searchType = data.search_type || 'address';
   window._summary = data.summary || {};
   communitySummaries = data.community_summaries || {};
-  if (data.search_type === 'area') { collapsedCommunities = {}; const cNames = [...new Set(txData.map(tx => tx.community_name).filter(Boolean))]; cNames.forEach(cn => { collapsedCommunities[cn] = true; }); document.getElementById('headerFilters').classList.add('show'); }
+  if (data.search_type === 'area') { collapsedCommunities = {}; const cNames = [...new Set(txData.map(tx => tx.community_name).filter(Boolean))]; cNames.forEach(cn => { collapsedCommunities[cn] = true; }); document.getElementById('headerFilters').classList.add('show'); populateDistrictFilter(); }
   else { collapsedCommunities = {}; document.getElementById('headerFilters').classList.remove('show'); }
   sortData(currentSort); renderResults(); renderSummary(); plotMarkers(fitBounds);
   if (window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
@@ -554,8 +559,20 @@ function buildGroups() {
   return merged;
 }
 
-function getUnitPriceColor(wan) { if (wan <= 0) return '#888'; const t = markerSettings.unitThresholds; if (wan >= t[2]) return '#b71c1c'; if (wan >= t[1]) return '#e65100'; if (wan >= t[0]) return '#f57f17'; return '#1b5e20'; }
-function getTotalPriceColor(wan) { if (wan <= 0) return '#888'; const t = markerSettings.totalThresholds; if (wan >= t[2]) return '#b71c1c'; if (wan >= t[1]) return '#e65100'; if (wan >= t[0]) return '#f57f17'; return '#1b5e20'; }
+// 色彩漸變：綠→黃→紅（HSL 插值）
+function priceColorGradient(value, lo, hi) {
+  if (value <= 0) return '#888';
+  if (value <= lo) return 'hsl(120,70%,35%)'; // 綠
+  if (value >= hi) return 'hsl(0,75%,45%)';   // 紅
+  // 線性插值 hue: 120(綠) → 60(黃) → 0(紅)
+  const ratio = (value - lo) / (hi - lo);
+  const hue = 120 - ratio * 120;
+  const sat = 70 + ratio * 5;
+  const light = 35 + ratio * 10;
+  return `hsl(${Math.round(hue)},${Math.round(sat)}%,${Math.round(light)}%)`;
+}
+function getUnitPriceColor(wan) { const t = markerSettings.unitThresholds; return priceColorGradient(wan, t[0], t[2]); }
+function getTotalPriceColor(wan) { const t = markerSettings.totalThresholds; return priceColorGradient(wan, t[0], t[2]); }
 function getColorForMode(mode, avgPriceWan, avgUnitWan) { if (mode === 'total_price') return getTotalPriceColor(avgPriceWan); return getUnitPriceColor(avgUnitWan); }
 
 function makeMarkerSVG({ sz, outerColor, innerColor, line1, line2, fontSz1, fontSz2 }) {
@@ -623,12 +640,9 @@ function onMarkerHover(marker, group) {
     const inner = marker._icon.firstElementChild || marker._icon;
     bounceElement(inner);
   }
-  // 2. 左側列表跳到對應建案/交易
+  // 2. 左側列表跳到對應建案/交易（不移動地圖，避免loop）
   const cn = group.communityName || group.label || '';
   if (cn) {
-    // 展開並滾動到建案 header
-    const headerId = 'citems-' + cssId(cn);
-    const headerEl = document.querySelector(`.community-header .ch-name`);
     const allHeaders = document.querySelectorAll('.community-header');
     for (const h of allHeaders) {
       const nameEl = h.querySelector('.ch-name');
@@ -650,8 +664,17 @@ function onMarkerHover(marker, group) {
 function onMarkerUnhover() {
   stopAllBounce();
   hideMarkerTooltip();
-  // 移除 hover 高亮
   document.querySelectorAll('.community-header.hover-highlight').forEach(h => h.classList.remove('hover-highlight'));
+}
+
+function fmtBuildDate(raw) {
+  if (!raw) return '-';
+  const s = String(raw).trim();
+  if (s.length >= 7) {
+    const y = parseInt(s.substring(0, 3), 10) + 1911;
+    return y + '/' + s.substring(3, 5);
+  }
+  return s || '-';
 }
 
 function showMarkerTooltip(marker, group) {
@@ -659,28 +682,25 @@ function showMarkerTooltip(marker, group) {
   if (!marker._icon) return;
   const items = group.items || [];
   if (items.length === 0) return;
-  // 算出資訊
-  const years = items.map(({ tx }) => tx.date_raw ? String(tx.date_raw).substring(0, 3) : '').filter(Boolean);
-  const uniqueYears = [...new Set(years)].sort();
-  const yearRange = uniqueYears.length > 0 ? (uniqueYears.length <= 2 ? uniqueYears.join('-') : uniqueYears[0] + '-' + uniqueYears[uniqueYears.length - 1]) : '-';
-  const floors = items.map(({ tx }) => tx.total_floors).filter(v => v > 0);
-  const maxFloor = floors.length > 0 ? Math.max(...floors) : 0;
-  const types = [...new Set(items.map(({ tx }) => tx.building_type).filter(Boolean))];
-  const typeText = types.length > 0 ? types.slice(0, 2).join('/') : '-';
-  const pings = items.map(({ tx }) => tx.area_ping).filter(v => v > 0);
-  const avgPing = pings.length > 0 ? (pings.reduce((a, b) => a + b, 0) / pings.length).toFixed(0) : '-';
   const label = group.communityName || group.label || '';
+  // 建案完成日期 (build_date → completion_date)
+  const completionDates = [...new Set(items.map(({ tx }) => tx.completion_date).filter(Boolean))];
+  const buildDateText = completionDates.length > 0 ? fmtBuildDate(completionDates[0]) : '-';
+  // 主要建材
+  const materials = [...new Set(items.map(({ tx }) => tx.main_material).filter(Boolean))];
+  const materialText = materials.length > 0 ? materials.slice(0, 2).join('/') : '-';
+  // 主要用途
+  const uses = [...new Set(items.map(({ tx }) => tx.main_use).filter(Boolean))];
+  const useText = uses.length > 0 ? uses.slice(0, 2).join('/') : '-';
 
   const tip = document.createElement('div');
   tip.className = 'marker-tooltip-info';
   tip.innerHTML = `
     ${label ? `<div class="mti-name">${escHtml(label)}</div>` : ''}
-    <div class="mti-row"><span>📅</span> 民${yearRange}年</div>
-    ${maxFloor > 0 ? `<div class="mti-row"><span>🏢</span> ${maxFloor}樓</div>` : ''}
-    <div class="mti-row"><span>🏠</span> ${typeText}</div>
-    <div class="mti-row"><span>📐</span> 均${avgPing}坪</div>
+    <div class="mti-row"><span>📅</span> 完工 ${buildDateText}</div>
+    <div class="mti-row"><span>🧱</span> ${escHtml(materialText)}</div>
+    <div class="mti-row"><span>🏠</span> ${escHtml(useText)}</div>
   `;
-  // 定位到 marker 上方
   const iconRect = marker._icon.getBoundingClientRect();
   tip.style.position = 'fixed';
   tip.style.left = (iconRect.left + iconRect.width / 2) + 'px';
@@ -704,15 +724,25 @@ function addLegend() {
     div.innerHTML = `<div style="background:var(--card);padding:10px 12px;border-radius:var(--radius);box-shadow:var(--shadow-md);font-size:11px;line-height:1.8;min-width:170px;border:1px solid var(--border)">
       <div style="font-weight:700;margin-bottom:4px;font-size:12px">🎯 雙圈色彩圖例</div>
       <div style="font-weight:600;font-size:10px;color:var(--primary);margin-bottom:2px">● 外環＝單價/坪 ｜ ● 內圈＝總價</div>
-      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#1b5e20" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#1b5e20"/></svg><span>低（＜20萬/坪 / ＜500萬）</span></div>
-      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#f57f17" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#f57f17"/></svg><span>中（20-40萬 / 500-1500萬）</span></div>
-      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#e65100" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#e65100"/></svg><span>中高（40-70萬 / 1500-3000萬）</span></div>
-      <div style="display:flex;align-items:center;gap:6px"><svg width="18" height="18"><circle cx="9" cy="9" r="8" fill="#b71c1c" stroke="#fff" stroke-width="1.5"/><circle cx="9" cy="9" r="5" fill="#b71c1c"/></svg><span>高（＞70萬/坪 / ＞3000萬）</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,hsl(120,70%,35%),hsl(60,72%,40%))"></div><span>低→中（綠→黃）</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,hsl(60,72%,40%),hsl(0,75%,45%))"></div><span>中→高（黃→紅）</span></div>
+      <div style="font-size:10px;color:var(--text3);margin-top:2px">單價: ${markerSettings.unitThresholds[0]}~${markerSettings.unitThresholds[2]}萬/坪<br>總價: ${markerSettings.totalThresholds[0]}~${markerSettings.totalThresholds[2]}萬</div>
       <div style="font-weight:600;margin-top:6px;font-size:10px;color:var(--text2)">📊 圈內＝近2年均價(排除特殊)</div>
     </div>`;
     L.DomEvent.disableScrollPropagation(div); L.DomEvent.disableClickPropagation(div); return div;
   };
   legend.addTo(map);
+}
+
+// ── 動態填充行政區篩選 ──
+function populateDistrictFilter() {
+  const sel = document.getElementById('hfDistrict');
+  if (!sel) return;
+  const districts = [...new Set(txData.map(tx => tx.district).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">全部區域</option>';
+  districts.forEach(d => {
+    sel.innerHTML += `<option value="${escAttr(d)}">${escHtml(d)}</option>`;
+  });
 }
 
 function locateMe() {
@@ -796,10 +826,12 @@ function updateAreaToggleState() {
 
 function onMapMoveEnd() {
   if (!areaAutoSearch) return;
+  if (_hoverPanSuppressed) return;  // 防止 hover panTo 觸發重新載入
   const z = map.getZoom();
   if (z < (markerSettings.osmZoom || 16)) return;
   clearTimeout(_areaSearchTimer);
   _areaSearchTimer = setTimeout(() => {
+    if (_hoverPanSuppressed) return;
     if (areaAutoSearch && map.getZoom() >= (markerSettings.osmZoom || 16)) {
       doAreaSearch();
     }

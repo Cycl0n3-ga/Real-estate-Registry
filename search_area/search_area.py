@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-search_area.py — 區域搜尋模組
+search_area.py — 區域搜尋與篩選模組
 
 從 web/server.py 抽出的模組化元件，提供：
+  - parse_filters: 從 dict args 解析篩選參數
   - build_filter_where: 建立篩選 WHERE 子句
   - search_by_community_name: 以建案名直查 DB
   - search_area: 依經緯度範圍搜尋交易
+  - build_community_coords_cache: 建立建案平均座標快取
 """
 
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -53,13 +56,74 @@ def _get_connection(db_path: str):
     return conn
 
 
+def parse_range(val: str) -> tuple:
+    """解析範圍字串 (e.g. '20-40') → (min, max)"""
+    if not val:
+        return None, None
+    if '-' in val:
+        parts = val.split('-', 1)
+        try:
+            lo = float(parts[0]) if parts[0].strip() else None
+            hi = float(parts[1]) if parts[1].strip() else None
+            return lo, hi
+        except ValueError:
+            return None, None
+    try:
+        v = float(val)
+        return v, v
+    except ValueError:
+        return None, None
+
+
+def parse_filters(args: dict) -> dict:
+    """
+    從 dict (request.args 或任意 dict) 解析篩選參數
+
+    Args:
+        args: 參數 dict，key 為 building_type, rooms, public_ratio, year, ping,
+              unit_price, price, exclude_special
+
+    Returns:
+        篩選條件 dict
+    """
+    filters = {}
+
+    btype = args.get("building_type", "").strip() if isinstance(args.get("building_type"), str) else ""
+    if btype:
+        filters["building_types"] = [t.strip() for t in btype.split(",") if t.strip()]
+
+    rooms = args.get("rooms", "").strip() if isinstance(args.get("rooms"), str) else ""
+    if rooms:
+        filters["rooms"] = [int(r) for r in rooms.split(",") if r.strip().isdigit()]
+
+    for key, fmin, fmax in [
+        ("public_ratio", "public_ratio_min", "public_ratio_max"),
+        ("year", "year_min", "year_max"),
+        ("ping", "ping_min", "ping_max"),
+        ("unit_price", "unit_price_min", "unit_price_max"),
+        ("price", "price_min", "price_max"),
+    ]:
+        val = args.get(key, "").strip() if isinstance(args.get(key), str) else ""
+        if val:
+            lo, hi = parse_range(val)
+            if lo is not None:
+                filters[fmin] = lo
+            if hi is not None:
+                filters[fmax] = hi
+
+    exclude_sp = args.get("exclude_special", "")
+    if isinstance(exclude_sp, str) and exclude_sp.lower() in ("1", "true", "yes"):
+        filters["exclude_special"] = True
+
+    return filters
+
 
 def build_filter_where(filters: dict, params: list) -> list:
     """
     建立篩選 WHERE 子句（可被 area 搜尋、community 直查共用）
 
     Args:
-        filters: 篩選條件 dict
+        filters: 篩選條件 dict（parse_filters 回傳值）
         params: SQL 參數 list（會被就地 extend）
 
     Returns:
@@ -67,7 +131,6 @@ def build_filter_where(filters: dict, params: list) -> list:
     """
     clauses = []
     if filters.get("building_types"):
-        # 用 LIKE 模糊比對，讓 "住宅大樓" 能匹配 "住宅大樓(11層含以上有電梯)"
         like_parts = []
         for bt in filters["building_types"]:
             like_parts.append("building_type LIKE ?")
@@ -124,12 +187,12 @@ def search_by_community_name(
 
     Args:
         community_name: 建案名稱
-        filters: 篩選條件
+        filters: 篩選條件（parse_filters 回傳值）
         limit: 回傳上限
         db_path: 資料庫路徑
 
     Returns:
-        list of dict（原始 row）
+        list of dict
     """
     db = db_path or DEFAULT_DB_PATH
     params = [community_name]
@@ -158,12 +221,12 @@ def search_area(
 
     Args:
         south, north, west, east: 經緯度邊界
-        filters: 篩選條件 dict
+        filters: 篩選條件 dict（parse_filters 回傳值）
         limit: 回傳上限
         db_path: 資料庫路徑
 
     Returns:
-        list of dict（原始 row）
+        list of dict
     """
     db = db_path or DEFAULT_DB_PATH
     filters = filters or {}
@@ -183,3 +246,34 @@ def search_area(
     conn = _get_connection(db)
     rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
     return rows
+
+
+def build_community_coords_cache(db_path: str = None) -> dict:
+    """
+    建立建案平均座標快取
+
+    Args:
+        db_path: 資料庫路徑
+
+    Returns:
+        dict: {community_name: (lat, lng)}
+    """
+    db = db_path or DEFAULT_DB_PATH
+    try:
+        t0 = time.time()
+        conn = sqlite3.connect(db)
+        cursor = conn.execute("""
+            SELECT community_name, AVG(lat) AS avg_lat, AVG(lng) AS avg_lng
+            FROM land_transaction
+            WHERE community_name IS NOT NULL AND community_name != ''
+              AND lat IS NOT NULL AND lat != 0
+              AND lng IS NOT NULL AND lng != 0
+            GROUP BY community_name
+        """)
+        cache = {row[0]: (row[1], row[2]) for row in cursor}
+        conn.close()
+        print(f"📍 建案座標快取: {len(cache)} 個建案 ({time.time()-t0:.2f}s)")
+        return cache
+    except Exception as e:
+        print(f"⚠️  建案座標快取建立失敗: {e}")
+        return {}
