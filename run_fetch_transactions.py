@@ -7,10 +7,10 @@ import importlib.util
 import types
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-PKG_DIR = os.path.join(ROOT, "fetch com from lvr")
+PKG_DIR = os.path.join(ROOT, "lvr_fetcher")
 
-# 手動將 "fetch com from lvr" 以 "fetch_com_from_lvr" 名稱載入為 package
-PKG_NAME = "fetch_com_from_lvr"
+# 手動將 lvr_fetcher 載入為 package
+PKG_NAME = "lvr_fetcher"
 
 def _load_module(name, filepath, pkg_name=None):
     spec = importlib.util.spec_from_file_location(

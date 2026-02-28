@@ -1,11 +1,17 @@
-# 🏠 良富居地產 — 不動產實價登錄查詢系統 v4.4
+# 🏢 良富居地產 — 不動產實價登錄查詢系統 v5.0
 
-全台灣不動產交易實價登錄資料查詢系統，整合地圖視覺化、建案名稱反查、OSM 離線地理編碼與智慧地址匹配。
+<div align="center">
 
-![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
-![Flask](https://img.shields.io/badge/flask-3.0+-green.svg)
-![SQLite](https://img.shields.io/badge/sqlite-3-blue.svg)
-![Leaflet](https://img.shields.io/badge/leaflet-1.9-green.svg)
+**台灣不動產實價登錄查詢平台 | 地圖視覺化 | 建案搜尋 | 價格趨勢分析**
+
+[![Python 3.8+](https://img.shields.io/badge/Python-3.8+-3776AB?logo=python&logoColor=white)](https://python.org)
+[![Flask](https://img.shields.io/badge/Flask-2.0+-000?logo=flask)](https://flask.palletsprojects.com)
+[![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite)](https://sqlite.org)
+[![Leaflet](https://img.shields.io/badge/Leaflet-1.9-199900?logo=leaflet)](https://leafletjs.com)
+
+</div>
+
+---
 
 ## ✨ 功能特色
 

@@ -92,8 +92,10 @@ DB_PATH = str(LAND_DIR / "db" / "land_data.db")
 com2addr_engine = None
 com2addr_ready = False
 geocoder_engine = None
-geocoder_ready = Falsecom_matcher = None         # CommunityMatcher 建案模糊搜尋引擎
-com_matcher_ready = False_community_coords_cache = {}  # community_name → (lat, lng)
+geocoder_ready = False
+com_matcher = None                 # CommunityMatcher 建案模糊搜尋引擎
+com_matcher_ready = False
+_community_coords_cache = {}       # community_name → (lat, lng)
 _search_cache = {}             # cache_key → (result_json, timestamp)
 _CACHE_TTL = 180               # 3 分鐘快取
 
@@ -531,6 +533,27 @@ def api_com_match():
 # 啟動
 # ════════════════════════════════════════════════════════════════
 
+
+# ═══════════════════════════════════════════════════════════════
+# /api/trend — 價格趨勢 API
+# ═══════════════════════════════════════════════════════════════
+@app.route("/api/trend", methods=["GET"])
+def api_trend():
+    """價格趨勢 API: 按月/季/年彙總統計"""
+    keyword = request.args.get("keyword", "").strip()
+    if not keyword:
+        return jsonify({"success": False, "error": "缺少 keyword 參數"})
+    period = request.args.get("period", "monthly")
+    if period not in ("monthly", "quarterly", "yearly"):
+        period = "monthly"
+    try:
+        from trend_utils import get_trend_data
+        result = get_trend_data(keyword, period=period, db_path=str(DB_PATH))
+        return jsonify({"success": True, **result})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("🏢 良富居地產 v4.3 — API 伺服器")
@@ -551,3 +574,4 @@ if __name__ == "__main__":
     t3.start()
 
     app.run(debug=False, host="0.0.0.0", port=5001)
+

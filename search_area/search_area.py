@@ -29,6 +29,25 @@ SELECT_COLS = """
     note, lat, lng, community_name
 """
 
+# ── 連線快取 ──────────────────────────────────────────────────────────────────
+_conn_cache = {}
+
+
+def _get_connection(db_path: str):
+    """取得已優化的 SQLite 連線（模組級快取，避免重複開關）"""
+    if db_path in _conn_cache:
+        return _conn_cache[db_path]
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-32768")      # 32MB cache
+    conn.execute("PRAGMA mmap_size=268435456")     # 256MB mmap
+    conn.execute("PRAGMA temp_store=MEMORY")
+    _conn_cache[db_path] = conn
+    return conn
+
+
 
 def build_filter_where(filters: dict, params: list) -> list:
     """
@@ -115,10 +134,8 @@ def search_by_community_name(
     )
     sql = f"SELECT {SELECT_COLS} FROM land_transaction WHERE {where_sql} ORDER BY transaction_date DESC LIMIT ?"
     params.append(limit)
-    conn = sqlite3.connect(db)
-    conn.row_factory = sqlite3.Row
+    conn = _get_connection(db)
     rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
-    conn.close()
     return rows
 
 
@@ -158,8 +175,6 @@ def search_area(
     sql = f"SELECT {SELECT_COLS} FROM land_transaction WHERE {where_sql} ORDER BY transaction_date DESC LIMIT ?"
     params.append(limit)
 
-    conn = sqlite3.connect(db)
-    conn.row_factory = sqlite3.Row
+    conn = _get_connection(db)
     rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
-    conn.close()
     return rows
