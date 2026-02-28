@@ -102,16 +102,19 @@ function initMap() {
   };
 
   markerClusterGroup = L.markerClusterGroup({
-    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: true, maxClusterRadius: 40,
+    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, maxClusterRadius: 40,
     spiderfyDistanceMultiplier: 2.5,
     iconCreateFunction: iconCreateFn
   });
 
   communityClusterGroup = L.markerClusterGroup({
-    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: true, maxClusterRadius: 40,
+    spiderfyOnMaxZoom: true, showCoverageOnHover: false, zoomToBoundsOnClick: false, maxClusterRadius: 40,
     spiderfyDistanceMultiplier: 2.5,
     iconCreateFunction: iconCreateFn
   });
+
+  markerClusterGroup.on('clusterclick', function (a) { a.layer.spiderfy(); });
+  communityClusterGroup.on('clusterclick', function (a) { a.layer.spiderfy(); });
 
   const spiderfyHandler = (e) => {
     e.cluster._icon.classList.add('spider-focus');
@@ -159,15 +162,10 @@ function quickFilter(mode) {
 }
 function getFilterParams() {
   let p = '';
-  const fields = [['fBuildType', 'building_type'], ['fRooms', 'rooms'], ['fPing', 'ping'], ['fRatio', 'public_ratio'], ['fUnitPrice', 'unit_price'], ['fPrice', 'price'], ['fYear', 'year']];
-  fields.forEach(([id, param]) => { const v = document.getElementById(id).value.trim(); if (v) p += '&' + param + '=' + encodeURIComponent(v); });
+  const fields = [['fBuildType', 'building_type'], ['fRooms', 'rooms'], ['fPing', 'ping'], ['fRatio', 'public_ratio'], ['fUnitPrice', 'unit_price'], ['fPrice', 'price']];
+  fields.forEach(([id, param]) => { const el = document.getElementById(id); if (el && el.value.trim()) p += '&' + param + '=' + encodeURIComponent(el.value.trim()); });
   const exSp = document.getElementById('fExcludeSpecial'); if (exSp && exSp.checked) p += '&exclude_special=1';
-  return p;
-}
-function getHeaderFilterParams() {
-  let p = '';
-  const hd = document.getElementById('hfDistrict'); if (hd && hd.value) p += '&district=' + encodeURIComponent(hd.value);
-  const hb = document.getElementById('hfBuildType'); if (hb && hb.value) p += '&building_type=' + encodeURIComponent(hb.value);
+
   const yMin = document.getElementById('hfYearMin');
   const yMax = document.getElementById('hfYearMax');
   if (yMin && yMax && (yMin.value || yMax.value)) {
@@ -175,6 +173,11 @@ function getHeaderFilterParams() {
     const vMax = yMax.value || '999';
     p += '&year=' + encodeURIComponent(`${vMin}-${vMax}`);
   }
+
+  if (lastSearchType === 'area' && markerSettings.areaBuildTypes) {
+    p += '&building_type=' + encodeURIComponent(markerSettings.areaBuildTypes.join(','));
+  }
+
   return p;
 }
 
@@ -354,7 +357,7 @@ async function doAreaSearch() {
   const results = document.getElementById('results');
   results.innerHTML = '<div class="loading"><div class="skeleton" style="height:60px;margin:16px"></div><div class="skeleton" style="height:60px;margin:16px"></div></div>';
   const limitVal = document.getElementById('limitSelect').value;
-  const url = `/api/search_area?south=${bounds.getSouth()}&north=${bounds.getNorth()}&west=${bounds.getWest()}&east=${bounds.getEast()}&limit=${limitVal}&location_mode=${getLocationMode()}` + getFilterParams() + getHeaderFilterParams();
+  const url = `/api/search_area?south=${bounds.getSouth()}&north=${bounds.getNorth()}&west=${bounds.getWest()}&east=${bounds.getEast()}&limit=${limitVal}&location_mode=${getLocationMode()}` + getFilterParams();
   try {
     const resp = await fetch(url);
     const ctype = resp.headers.get('content-type') || '';
@@ -377,8 +380,8 @@ function handleSearchResult(data, fitBounds = true) {
   window._searchType = data.search_type || 'address';
   window._summary = data.summary || {};
   communitySummaries = data.community_summaries || {};
-  if (data.search_type === 'area') { collapsedCommunities = {}; const cNames = [...new Set(txData.map(tx => tx.community_name).filter(Boolean))]; cNames.forEach(cn => { collapsedCommunities[cn] = true; }); document.getElementById('headerFilters').classList.add('show'); populateDistrictFilter(); }
-  else { collapsedCommunities = {}; document.getElementById('headerFilters').classList.remove('show'); }
+  if (data.search_type === 'area') { collapsedCommunities = {}; const cNames = [...new Set(txData.map(tx => tx.community_name).filter(Boolean))]; cNames.forEach(cn => { collapsedCommunities[cn] = true; }); }
+  else { collapsedCommunities = {}; }
   sortData(currentSort); renderResults(); renderSummary(); plotMarkers(fitBounds);
   if (window.innerWidth <= 768) document.getElementById('sidebar').classList.remove('open');
 }
@@ -746,6 +749,17 @@ function updateLegend() {
     <div style="display:flex;align-items:center;gap:6px"><div style="width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,hsl(60,72%,40%),hsl(0,75%,45%))"></div><span>中→高（黃→紅）</span></div>
     <div style="font-size:10px;color:var(--text3);margin-top:2px">單價: ${markerSettings.unitThresholds[0]}~${markerSettings.unitThresholds[2]}萬/坪<br>總價: ${markerSettings.totalThresholds[0]}~${markerSettings.totalThresholds[2]}萬</div>
     <div style="font-weight:600;margin-top:6px;font-size:10px;color:var(--text2)">📊 圈內＝近2年均價(排除特殊)</div>
+    
+    <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+      <button class="mbc-settings" onclick="toggleSettings()" title="設定" style="width:28px;height:28px;padding:0;display:flex;align-items:center;justify-content:center;font-size:16px;background:var(--bg);border:1px solid var(--border);border-radius:6px;cursor:pointer;">⚙️</button>
+      <div class="area-toggle-wrap" id="areaToggleWrap" style="margin:0;padding:0;background:none;box-shadow:none;display:flex;align-items:center;gap:6px;">
+        <label class="area-toggle" style="margin:0;">
+          <input type="checkbox" id="areaToggle" ${areaAutoSearch ? 'checked' : ''} onchange="toggleAreaAutoSearch(this.checked)">
+          <span class="area-toggle-slider"></span>
+        </label>
+        <span class="area-toggle-label" id="areaToggleLabel" style="font-size:11px;font-weight:600;">自動顯示建案</span>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -762,16 +776,7 @@ function addLegend() {
   _legendControl.addTo(map);
 }
 
-// ── 動態填充行政區篩選 ──
-function populateDistrictFilter() {
-  const sel = document.getElementById('hfDistrict');
-  if (!sel) return;
-  const districts = [...new Set(txData.map(tx => tx.district).filter(Boolean))].sort();
-  sel.innerHTML = '<option value="">全部區域</option>';
-  districts.forEach(d => {
-    sel.innerHTML += `<option value="${escAttr(d)}">${escHtml(d)}</option>`;
-  });
-}
+// ── (Removed populateDistrictFilter) ──
 
 function locateMe() {
   if (!navigator.geolocation) { alert('您的瀏覽器不支援定位功能'); return; }
@@ -830,21 +835,40 @@ function updateThresh() {
 }
 
 function applySettings() {
-  markerSettings.outerMode = document.getElementById('sOuter').value;
-  markerSettings.innerMode = document.getElementById('sInner').value;
-  markerSettings.showLotAddr = document.getElementById('sShowLotAddr').checked;
-  markerSettings.yearFormat = document.getElementById('sYearFormat') ? document.getElementById('sYearFormat').value : 'roc';
+  let needsRefetch = false;
 
   const cb = document.querySelectorAll('.sb-checkbox');
   if (cb.length > 0) {
     const selectedTypes = [];
     cb.forEach(c => { if (c.checked) selectedTypes.push(c.value); });
-    markerSettings.areaBuildTypes = selectedTypes;
+    if (JSON.stringify(markerSettings.areaBuildTypes) !== JSON.stringify(selectedTypes)) {
+      needsRefetch = true;
+      markerSettings.areaBuildTypes = selectedTypes;
+    }
   }
+
+  const yMin = document.getElementById('hfYearMin') ? document.getElementById('hfYearMin').value : '';
+  const yMax = document.getElementById('hfYearMax') ? document.getElementById('hfYearMax').value : '';
+  if (markerSettings.yearMin !== yMin || markerSettings.yearMax !== yMax) {
+    needsRefetch = true;
+    markerSettings.yearMin = yMin;
+    markerSettings.yearMax = yMax;
+  }
+
+  markerSettings.outerMode = document.getElementById('sOuter').value;
+  markerSettings.innerMode = document.getElementById('sInner').value;
+  markerSettings.showLotAddr = document.getElementById('sShowLotAddr').checked;
+  markerSettings.yearFormat = document.getElementById('sYearFormat') ? document.getElementById('sYearFormat').value : 'roc';
 
   localStorage.setItem('markerSettings', JSON.stringify(markerSettings));
 
   updateLegend();
+
+  if (needsRefetch) {
+    if (lastSearchType === 'area') doAreaSearch();
+    else if (lastSearchType === 'keyword') doSearch();
+    return;
+  }
 
   if (txData.length > 0) {
     renderResults();
@@ -875,6 +899,13 @@ function loadSettings() {
   document.getElementById('sInner').value = markerSettings.innerMode;
   document.getElementById('sShowLotAddr').checked = !!markerSettings.showLotAddr;
   if (document.getElementById('sYearFormat')) document.getElementById('sYearFormat').value = markerSettings.yearFormat || 'roc';
+
+  if (document.getElementById('hfYearMin') && markerSettings.yearMin !== undefined) {
+    document.getElementById('hfYearMin').value = markerSettings.yearMin;
+  }
+  if (document.getElementById('hfYearMax') && markerSettings.yearMax !== undefined) {
+    document.getElementById('hfYearMax').value = markerSettings.yearMax;
+  }
 
   if (markerSettings.areaBuildTypes) {
     const cbs = document.querySelectorAll('.sb-checkbox');
