@@ -439,21 +439,14 @@ function baseAddress(addr) { if (!addr) return ''; return addr.replace(/\d+樓.*
 function stripCityJS(addr) { if (!addr) return ''; let s = addr.replace(/^(?:(?:台|臺)(?:北|中|南|東)市|(?:新北|桃園|高雄|基隆|新竹|嘉義)[市縣]|.{2,3}縣)/, ''); s = s.replace(/^[\u4e00-\u9fff]{1,4}[區鄉鎮市]/, ''); return s; }
 
 function buildGroups() {
-  const preciseMode = getLocationMode() === 'osm';
   const raw = {};
   txData.forEach((tx, idx) => {
     if (!tx.lat || !tx.lng) return;
     if (!markerSettings.showLotAddr && isLotAddress(tx.address_raw || tx.address || '')) return;
     let key;
-    if (preciseMode) {
-      // 放大時：按地址精確分組，但同建案仍用建案名作 key 前綴以便後續合併
-      if (tx.community_name) key = 'c:' + tx.community_name + ':' + baseAddress(tx.address_raw || tx.address);
-      else key = 'a:' + baseAddress(tx.address_raw || tx.address);
-    } else {
-      // 縮小時：同建案一律合併
-      if (tx.community_name) key = 'c:' + tx.community_name;
-      else key = 'a:' + baseAddress(tx.address_raw || tx.address);
-    }
+    // 縮小時：同建案一律合併
+    if (tx.community_name) key = 'c:' + tx.community_name;
+    else key = 'a:' + baseAddress(tx.address_raw || tx.address);
     if (!raw[key]) raw[key] = { label: tx.community_name || stripCityJS(baseAddress(tx.address)), communityName: tx.community_name || '', items: [], lats: [], lngs: [], prices: [], unitPrices: [] };
     const g = raw[key]; g.items.push({ tx, origIdx: idx }); g.lats.push(tx.lat); g.lngs.push(tx.lng);
     if (tx.price > 0) g.prices.push(tx.price); if (tx.unit_price_ping > 0) g.unitPrices.push(tx.unit_price_ping);
@@ -461,20 +454,16 @@ function buildGroups() {
   const arr = Object.values(raw), len = arr.length;
   arr.forEach(g => { const sLat = g.lats.slice().sort((a, b) => a - b), sLng = g.lngs.slice().sort((a, b) => a - b), m = Math.floor(sLat.length / 2); g._cLat = sLat[m]; g._cLng = sLng[m]; });
 
-  // 合併距離：放大時小（只合併很近的），縮小時大
-  const MERGE = preciseMode ? 0.00008 : 0.0003;
+  // ── Phase 3: Union-Find 近距離合併（≈28m 內視為同位置）──
+  //    0.00025° ≈ 28m(lat) / 25m(lng) @ 25°N
+  const MERGE = 0.00025;
   const par = Array.from({ length: len }, (_, i) => i);
   function find(x) { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; }
-  for (let i = 0; i < len; i++) {
-    for (let j = i + 1; j < len; j++) {
-      const dist = Math.abs(arr[i]._cLat - arr[j]._cLat) + Math.abs(arr[i]._cLng - arr[j]._cLng);
-      // 同建案且距離足夠近：合併
-      const sameCom = arr[i].communityName && arr[i].communityName === arr[j].communityName;
-      if (sameCom && dist < MERGE * 3) par[find(i)] = find(j);
-      // 不同建案但非常接近：也合併（避免重疊）
-      else if (dist < MERGE) par[find(i)] = find(j);
-    }
-  }
+  for (let i = 0; i < len; i++)
+    for (let j = i + 1; j < len; j++)
+      if (Math.abs(arr[i]._cLat - arr[j]._cLat) < MERGE &&
+        Math.abs(arr[i]._cLng - arr[j]._cLng) < MERGE)
+        par[find(i)] = find(j);
   const buckets = {}; for (let i = 0; i < len; i++) { const r = find(i); if (!buckets[r]) buckets[r] = []; buckets[r].push(arr[i]); }
   const merged = Object.values(buckets).map(gs => {
     if (gs.length === 1) return gs[0];
