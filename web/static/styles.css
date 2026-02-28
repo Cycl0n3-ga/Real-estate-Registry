@@ -109,35 +109,6 @@ body {
   text-shadow: 0 1px 2px rgba(0, 0, 0, .1);
 }
 
-.header .unit-toggle {
-  margin-left: auto;
-  display: flex;
-  gap: 3px;
-  background: rgba(255, 255, 255, .12);
-  border-radius: 20px;
-  padding: 3px;
-  backdrop-filter: blur(8px);
-}
-
-.header .unit-toggle button {
-  border: none;
-  background: transparent;
-  color: rgba(255, 255, 255, .7);
-  padding: 5px 16px;
-  border-radius: 18px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  transition: var(--transition);
-}
-
-.header .unit-toggle button.active {
-  background: #fff;
-  color: var(--primary);
-  font-weight: 700;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .1);
-}
-
 .hamburger {
   display: none;
   background: none;
@@ -876,6 +847,7 @@ body {
 
 .leaflet-marker-icon {
   transition: opacity 0.3s, filter 0.3s;
+  background: var(--card);
 }
 
 /* Map controls */
@@ -911,31 +883,115 @@ body {
   transform: scale(1.05);
 }
 
-/* ═══ Area Toggle (Header) ═══ */
+/* ── Bottom Left Controls (Moved from Header) ── */
+.bottom-left-controls {
+  position: absolute;
+  bottom: 24px;
+  left: 16px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.bottom-left-controls>* {
+  pointer-events: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  border-radius: 24px;
+}
+
+/* Unit Toggle */
+.unit-toggle {
+  display: flex;
+  gap: 3px;
+  padding: 4px;
+  width: fit-content;
+}
+
+.unit-toggle button {
+  border: none;
+  background: transparent;
+  color: var(--text2);
+  padding: 5px 16px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: var(--transition);
+}
+
+.unit-toggle button.active {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, .25);
+}
+
+/* Filters */
+.header-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  width: fit-content;
+}
+
+.header-filters select,
+.header-filters input {
+  padding: 4px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  outline: none;
+  background: #fff;
+}
+
+.header-filters input {
+  width: 60px;
+  text-align: center;
+}
+
+.hf-label {
+  font-size: 12px;
+  color: var(--text2);
+  font-weight: 600;
+}
+
+.hf-apply {
+  padding: 5px 12px;
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: var(--transition);
+}
+
+.hf-apply:hover {
+  background: var(--primary-dark);
+}
+
+/* Area Auto-Search Toggle */
 .area-toggle-wrap {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-left: 8px;
-  padding: 3px 10px;
-  background: rgba(255, 255, 255, .12);
-  border-radius: 20px;
-  backdrop-filter: blur(8px);
-  transition: opacity var(--transition), filter var(--transition);
-}
-
-.area-toggle-wrap.disabled {
-  opacity: .45;
-  filter: grayscale(.5);
-  pointer-events: none;
+  gap: 6px;
+  padding: 6px 14px;
+  width: fit-content;
+  transition: opacity .2s;
 }
 
 .area-toggle {
   position: relative;
   display: inline-block;
-  width: 36px;
-  height: 20px;
-  flex-shrink: 0;
+  width: 32px;
+  height: 18px;
 }
 
 .area-toggle input {
@@ -947,39 +1003,52 @@ body {
 .area-toggle-slider {
   position: absolute;
   cursor: pointer;
-  inset: 0;
-  background: rgba(255, 255, 255, .25);
-  border-radius: 20px;
-  transition: background .25s;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+  border-radius: 18px;
 }
 
-.area-toggle-slider::before {
-  content: '';
+.area-toggle-slider:before {
   position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
   left: 2px;
   bottom: 2px;
-  width: 16px;
-  height: 16px;
-  background: #fff;
+  background-color: white;
+  transition: .2s;
   border-radius: 50%;
-  transition: transform .25s;
   box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
 }
 
 .area-toggle input:checked+.area-toggle-slider {
-  background: var(--green);
+  background-color: var(--primary);
 }
 
-.area-toggle input:checked+.area-toggle-slider::before {
-  transform: translateX(16px);
+.area-toggle input:checked+.area-toggle-slider:before {
+  transform: translateX(14px);
 }
 
 .area-toggle-label {
   font-size: 12px;
   font-weight: 600;
-  color: rgba(255, 255, 255, .85);
-  white-space: nowrap;
-  letter-spacing: .3px;
+  color: var(--text2);
+}
+
+/* ── Result Status ── */
+.map-panel-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  width: fit-content;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
 }
 
 /* Marker */
@@ -1227,69 +1296,6 @@ body {
   display: block;
 }
 
-/* ════════ Header Filters ════════ */
-.header-filters {
-  display: none;
-  gap: 4px;
-  align-items: center;
-  margin-left: 8px;
-}
-
-.header-filters.show {
-  display: flex;
-}
-
-.header-filters select,
-.header-filters input {
-  padding: 5px 10px;
-  border: none;
-  border-radius: 16px;
-  font-size: 11px;
-  background: rgba(255, 255, 255, .15);
-  color: #fff;
-  outline: none;
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-}
-
-.header-filters select option {
-  color: var(--text);
-  background: var(--card);
-}
-
-.header-filters input {
-  width: 80px;
-  text-align: center;
-}
-
-.header-filters input::placeholder {
-  color: rgba(255, 255, 255, .5);
-}
-
-.header-filters .hf-label {
-  font-size: 10px;
-  color: rgba(255, 255, 255, .6);
-  white-space: nowrap;
-  font-weight: 500;
-}
-
-.header-filters .hf-apply {
-  padding: 5px 12px;
-  border: 1px solid rgba(255, 255, 255, .4);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, .12);
-  color: #fff;
-  font-size: 11px;
-  cursor: pointer;
-  font-weight: 700;
-  transition: var(--transition);
-  backdrop-filter: blur(8px);
-}
-
-.header-filters .hf-apply:hover {
-  background: rgba(255, 255, 255, .25);
-}
-
 /* ════════ Autocomplete ════════ */
 .autocomplete-wrap {
   position: relative;
@@ -1367,26 +1373,6 @@ body {
   .hamburger {
     display: flex;
     align-items: center;
-    justify-content: center;
-    width: 38px;
-    height: 38px;
-  }
-
-  .header .logo {
-    font-size: 16px;
-  }
-
-  .header .unit-toggle button {
-    padding: 4px 10px;
-    font-size: 12px;
-  }
-
-  .header-filters {
-    flex-wrap: wrap;
-  }
-
-  .header-filters select,
-  .header-filters input {
     font-size: 10px;
     padding: 3px 6px;
   }

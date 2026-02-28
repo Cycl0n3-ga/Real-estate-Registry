@@ -17,40 +17,14 @@
 <body>
 
   <!-- ═══ HEADER ═══ -->
-  <div class="header">
-    <button class="hamburger" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+  <div class="header" style="justify-content: center; position: relative;">
+    <button class="hamburger" onclick="document.getElementById('sidebar').classList.toggle('open')"
+      style="position: absolute; left: 16px;">☰</button>
     <div class="logo">🏢 良富居地產</div>
-    <div class="unit-toggle">
-      <button class="active" data-unit="ping" onclick="setUnit('ping')">坪</button>
-      <button data-unit="sqm" onclick="setUnit('sqm')">m²</button>
+    <div style="position: absolute; right: 16px; display: flex; gap: 8px;">
+      <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切換深色/淺色模式 (D)">🌙</button>
+      <button class="settings-btn" onclick="toggleSettings()" title="設定">⚙️</button>
     </div>
-    <div class="header-filters" id="headerFilters">
-      <span class="hf-label">篩選:</span>
-      <select id="hfDistrict" title="行政區">
-        <option value="">全部區域</option>
-      </select>
-      <select id="hfBuildType" title="建物型態">
-        <option value="">全部類型</option>
-        <option value="住宅大樓">大樓</option>
-        <option value="華廈">華廈</option>
-        <option value="公寓">公寓</option>
-        <option value="透天厝">透天</option>
-        <option value="套房">套房</option>
-      </select>
-      <input id="hfYearMin" type="number" placeholder="民國起" min="80" max="120" title="民國年起始">
-      <span class="hf-label">~</span>
-      <input id="hfYearMax" type="number" placeholder="民國迄" min="80" max="120" title="民國年結束">
-      <button class="hf-apply" onclick="applyHeaderFilters()">套用</button>
-    </div>
-    <div class="area-toggle-wrap" id="areaToggleWrap" title="地圖≥16級時自動搜尋此區域交易">
-      <label class="area-toggle">
-        <input type="checkbox" id="areaToggle" onchange="toggleAreaAutoSearch(this.checked)">
-        <span class="area-toggle-slider"></span>
-      </label>
-      <span class="area-toggle-label" id="areaToggleLabel">搜此區域</span>
-    </div>
-    <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切換深色/淺色模式 (D)">🌙</button>
-    <button class="settings-btn" onclick="toggleSettings()" title="圓圈顯示設定">⚙️</button>
   </div>
 
   <!-- ═══ SETTINGS PANEL ═══ -->
@@ -101,6 +75,13 @@
         <input type="checkbox" id="sShowLotAddr" onchange="applySettings()"> 顯示地號/小段交易
       </label>
       <div style="font-size:10px;color:var(--text3);margin-top:2px">預設隱藏僅有地號的交易紀錄</div>
+    </div>
+    <div class="settings-group">
+      <div class="settings-group-title">📅 年份顯示格式</div>
+      <select id="sYearFormat" onchange="applySettings()">
+        <option value="roc">民國 (ROC)</option>
+        <option value="ce">西元 (CE)</option>
+      </select>
     </div>
     <div class="settings-group">
       <div class="settings-group-title">📍 自動精確定位</div>
@@ -201,9 +182,43 @@
     </div>
   </div>
 
-  <!-- ═══ MAP ═══ -->
-  <div class="map-wrap">
+  <!-- ═══ MAP PANEL ═══ -->
+  <div class="map-wrap" id="mapWrap">
     <div id="map"></div>
+
+    <!-- ═══ BOTTOM LEFT CONTROLS ═══ -->
+    <div class="bottom-left-controls" id="bottomLeftControls">
+      <div class="unit-toggle map-panel-pill">
+        <button class="active" data-unit="ping" onclick="setUnit('ping')">坪</button>
+        <button data-unit="sqm" onclick="setUnit('sqm')">m²</button>
+      </div>
+      <div class="header-filters map-panel-pill" id="headerFilters">
+        <select id="hfDistrict" title="行政區">
+          <option value="">全部區域</option>
+        </select>
+        <select id="hfBuildType" title="建物型態">
+          <option value="">全部</option>
+          <option value="住宅大樓">大樓</option>
+          <option value="華廈">華廈</option>
+          <option value="公寓">公寓</option>
+          <option value="透天厝">透天</option>
+          <option value="套房">套房</option>
+        </select>
+        <input id="hfYearMin" type="number" placeholder="民國起" min="80" max="150" title="自訂起年">
+        <span class="hf-label">-</span>
+        <input id="hfYearMax" type="number" placeholder="迄" min="80" max="150" title="自訂迄年">
+        <button class="hf-apply" onclick="applyHeaderFilters()">套用</button>
+      </div>
+      <div class="area-toggle-wrap map-panel-pill" id="areaToggleWrap" title="地圖移動時自動搜尋該區域">
+        <label class="area-toggle">
+          <input type="checkbox" id="areaToggle" checked onchange="toggleAreaAutoSearch(this.checked)">
+          <span class="area-toggle-slider"></span>
+        </label>
+        <span class="area-toggle-label" id="areaToggleLabel">自動顯示建案</span>
+      </div>
+    </div>
+
+    <!-- Map Controls (Zoom/Location) -->
     <div class="map-controls">
       <button onclick="locateMe()" title="移動到我的位置">📍</button>
       <button onclick="map.zoomIn()" title="放大">＋</button>
